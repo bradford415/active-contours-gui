@@ -24,6 +24,7 @@
 """
 import tkinter as tk
 import tkinter.filedialog
+from tkinter import ttk
 import PIL
 from PIL import ImageTk, Image
 import os
@@ -31,25 +32,46 @@ import os
 HEIGHT = 600
 WIDTH = 700
 
+LARGE_FONT= ("Verdana", 12)
+
 class Application(tk.Tk):
 
-    def __init__(self, master):
+    def __init__(self):
         tk.Tk.__init__(self)
         container = tk.Frame(self)
         container.pack(side="top", fill="both", expand=True)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
         
-        frame = HomePage(container, self)
-        frame.grid(row=HEIGHT, column=WIDTH, sticky="nsew")
-        
+        self.init_menu(container)
+
         self.frames = {}
-        self.frames[HomePage] = frame
+        for F in (HomePage, ImageViewer):
+            frame = F(container, self)
+            self.frames[F] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
+        
         self.show_frame(HomePage)
     
+    def init_menu(self, container):
+        menu_bar = tk.Menu(container)
+        file_menu = tk.Menu(menu_bar, tearoff=0)
+        file_menu.add_command()
+        file_menu.add_separator()
+        file_menu.add_command(label='Load Image', 
+                                command=lambda: controller.show_frame(HomePage))
+        file_menu.add_command(label='Exit',
+                                command=self.exit_client)
+        menu_bar.add_cascade(label='Actions', menu=file_menu)
+        
+        tk.Tk.config(self, menu=menu_bar)
+
     def show_frame(self, controller):
         frame = self.frames[controller]
         frame.tkraise()
+
+    def exit_client(self):
+        exit()
 
 
 class HomePage(tk.Frame):
@@ -57,7 +79,8 @@ class HomePage(tk.Frame):
     def __init__(self, master, controller):
         tk.Frame.__init__(self, master)
         self.master = master
-        #self.init_window()
+        label = tk.Label(self,  text="Start Page")
+        label.pack(pady=10, padx=10)
         #self.init_menu()
         self.root_dir = os.path.dirname(os.path.abspath(__file__))
         self.picture_dir = os.path.join(self.root_dir, "pictures")
@@ -69,28 +92,13 @@ class HomePage(tk.Frame):
         self.background_frame = tk.Frame(self.master, bg="#8fbaff")
         self.background_frame.place(relwidth=1, relheight=1)
 
-        
-    def init_menu(self):
-        menu = tk.Menu(self.master)
-        self.master.config(menu=menu)
-
-        actions = tk.Menu(menu)
-        menu.add_cascade(label='Actions', menu=actions)
-
-        actions.add_command(label='Load Image', 
-                                command=lambda: controller.show_frame(ImageViewer))
-        actions.add_command(label='Exit', command=self.exit_client)
-
-    
-    
-    def exit_client(self):
-        exit()
 
 class ImageViewer(tk.Frame):
 
-    def __int__(self, master, controller):
-        load_image()
-        
+    def __init__(self, master, controller):
+        tk.Frame.__init__(self, master)
+        #load_image()
+
     def load_image(self):
         file_name = tk.filedialog.askopenfilename(initialdir=self.picture_dir, 
                                                     title="Select a Picture", 
@@ -101,11 +109,12 @@ class ImageViewer(tk.Frame):
 def main():
 
     
-    root = tk.Tk()
 
-    MainApp = Application(root)
+    MainApp = Application()
 
-    root.mainloop()
+    MainApp.geometry(str(WIDTH) + "x" +str(HEIGHT))
+
+    MainApp.mainloop()
 
 if __name__ == '__main__':
     main()
