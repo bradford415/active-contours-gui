@@ -24,34 +24,54 @@
 """
 import tkinter as tk
 import tkinter.filedialog
-from tkinter import ttk
 import PIL
 from PIL import ImageTk, Image
 import os
 
 HEIGHT = 600
 WIDTH = 700
+TITLE = "Active Contours"
 
 LARGE_FONT= ("Verdana", 12)
 
+def load_image():
+
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PICTURE_DIR = os.path.join(ROOT_DIR, "pictures")
+
+    file_name = tk.filedialog.askopenfilename(initialdir=PICTURE_DIR, 
+                                                title="Select a Picture", 
+                                                filetypes=[("all images","*.pnm *.png *.jpg")])
+    load = Image.open(file_name)
+    render = ImageTk.PhotoImage(load)
+    img = tk.Label(image=render)
+    img.image = render
+    img.place(x=0, y=0)
+
+
 class Application(tk.Tk):
 
-    def __init__(self):
-        tk.Tk.__init__(self)
+    def __init__(self, *args, **kwargs):
+        tk.Tk.__init__(self, *args, **kwargs)
         container = tk.Frame(self)
         container.pack(side="top", fill="both", expand=True)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
         
-        self.init_menu(container)
-
         self.frames = {}
         for F in (HomePage, ImageViewer):
-            frame = F(container, self)
-            self.frames[F] = frame
+            page_name = F.__name__
+            frame = F(master=container, controller=self)
+            self.frames[page_name] = frame
+            
+            # put all of the pages in the same location;
+            # the one on the top of the stacking order
+            # will be the one that is visible.
             frame.grid(row=0, column=0, sticky="nsew")
         
-        self.show_frame(HomePage)
+        self.show_frame("HomePage")
+        self.init_menu(container)
+
     
     def init_menu(self, container):
         menu_bar = tk.Menu(container)
@@ -59,15 +79,16 @@ class Application(tk.Tk):
         file_menu.add_command()
         file_menu.add_separator()
         file_menu.add_command(label='Load Image', 
-                                command=lambda: controller.show_frame(HomePage))
+                                command=lambda: load_image())
         file_menu.add_command(label='Exit',
                                 command=self.exit_client)
         menu_bar.add_cascade(label='Actions', menu=file_menu)
         
         tk.Tk.config(self, menu=menu_bar)
 
-    def show_frame(self, controller):
-        frame = self.frames[controller]
+    def show_frame(self, page_name):
+        '''Show a frame for the given page name'''
+        frame = self.frames[page_name]
         frame.tkraise()
 
     def exit_client(self):
@@ -77,17 +98,14 @@ class Application(tk.Tk):
 class HomePage(tk.Frame):
     
     def __init__(self, master, controller):
-        tk.Frame.__init__(self, master)
-        self.master = master
-        label = tk.Label(self,  text="Start Page")
-        label.pack(pady=10, padx=10)
-        #self.init_menu()
-        self.root_dir = os.path.dirname(os.path.abspath(__file__))
-        self.picture_dir = os.path.join(self.root_dir, "pictures")
+        tk.Frame.__init__(self, master, bg='red')
+        self.controller = controller
+        self.controller.title('Active Contours')
+        #self.controller.state('zoomed') # fills entire screen on load
+        
 
     def init_window(self):
         self.master.title("Active Contours")
-        self.canvas = tk.Canvas(self.master, height=HEIGHT, width=WIDTH)
         self.canvas.pack()
         self.background_frame = tk.Frame(self.master, bg="#8fbaff")
         self.background_frame.place(relwidth=1, relheight=1)
@@ -96,23 +114,18 @@ class HomePage(tk.Frame):
 class ImageViewer(tk.Frame):
 
     def __init__(self, master, controller):
-        tk.Frame.__init__(self, master)
-        #load_image()
+        tk.Frame.__init__(self, master, bg="green")
+        self.root_dir = os.path.dirname(os.path.abspath(__file__))
+        self.picture_dir = os.path.join(self.root_dir, "pictures")
+        label = tk.Label(self,  text="ImageViewer Page")
+        label.pack(pady=10, padx=10)
 
-    def load_image(self):
-        file_name = tk.filedialog.askopenfilename(initialdir=self.picture_dir, 
-                                                    title="Select a Picture", 
-                                                    filetypes=[("all images","*.pnm *.png *.jpg")])
-        my_image = ImageTk.PhotoImage(Image.open(file_name))
-        my_image_label = tk.Label(image=my_image).pack()
 
 def main():
 
-    
-
     MainApp = Application()
-
     MainApp.geometry(str(WIDTH) + "x" +str(HEIGHT))
+
 
     MainApp.mainloop()
 
