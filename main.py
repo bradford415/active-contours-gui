@@ -38,6 +38,7 @@ TITLE = "Active Contours"
 MENU_1 = "Pages"
 MENU_2 = "Actions"
 MENU_3 = "Edit"
+MENU_4 = "Debug"
 
 LARGE_FONT= ("Verdana", 12)
 
@@ -122,7 +123,6 @@ class HomePage(tk.Frame):
     
     # controller allows functions from the Application
     # class to be accessed in different classes
-    # I don't fully understand how this works
     def __init__(self, master, controller):
         tk.Frame.__init__(self, master, bg='#aec8f5')
         self.controller = controller
@@ -140,6 +140,11 @@ class ImageViewer(tk.Frame):
         self.controller.title('Active Contours')
         self.canvas = None
 
+        # Properties to store the contour points 
+        self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
+        self.temp_ovals = []
+        self.final_ovals = []
+
         # Add additional menu options
         # Easier to add them to access image editing functions  
         # Actions menu options
@@ -154,14 +159,16 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.resize_image())
         self.file_menu_edit.add_command(label='Clear', 
                                 command=lambda: self.clear_image())
-
+        # Debug menu options
+        self.file_menu_debug = tk.Menu(controller.menu_bar, tearoff=0)
+        controller.menu_bar.add_cascade(label=MENU_4, menu=self.file_menu_debug)
+        self.file_menu_debug.add_command(label='Print Variable', 
+                                command=lambda: self.print_values())
 
     def load_image(self):
         
         ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
         PICTURE_DIR = os.path.join(ROOT_DIR, "pictures")
-
-
         self.file_name = tk.filedialog.askopenfilename(initialdir=PICTURE_DIR, 
                                                     title="Select a Picture", 
                                                     filetypes=[("all images","*.pnm *.png *.jpg")])
@@ -175,9 +182,10 @@ class ImageViewer(tk.Frame):
         print("width and height of image should be ", self.image.width(), self.image.height())
         self.image_on_canvas = None
         if self.canvas == None:
-            self.canvas = tk.Canvas(self, width = self.image.width(), height = self.image.height(), bg='white')
+            self.canvas = tk.Canvas(self, width = self.image.width(), height = self.image.height(), bg='white', cursor="cross")
             self.canvas.pack()
             self.canvas.create_image(0, 0, image=self.image, anchor="nw")
+            self.init_mouse_events()
         else:
             self.canvas.delete("all")
             self.canvas.config(width=self.image.width(), height=self.image.height())
@@ -194,11 +202,71 @@ class ImageViewer(tk.Frame):
         self.raw_image.thumbnail(max_size, Image.ANTIALIAS)
         self.image = ImageTk.PhotoImage(self.raw_image)
         self.init_UI()
-        
+    
+    def init_mouse_events(self):
+        """Bind mouse events"""
+        # Events:
+        #   ButtonPress-1 -> left mouse click
+        #   ButtonPress-2 -> middle (scroll) mouse click
+        #   ButtonPress-3 -> right mouse click
+        #   B1-Motion     -> mouse is moved when B1 is pressed
+        self.canvas.bind("<ButtonPress-1>", self.on_left_click) 
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
+
+    def on_left_click(self, event):
+        # Start coords of line
+        self.oval_coords["x"] = event.x
+        self.oval_coords["y"] = event.y
+        self.oval_coords["x2"] = event.x + 5
+        self.oval_coords["y2"] = event.y + 5
+        self.canvas.create_oval(self.oval_coords["x"], 
+                                    self.oval_coords["y"], 
+                                    self.oval_coords["x2"], 
+                                    self.oval_coords["y2"])
+        self.temp_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+
+
+        # Create contour if it does not already exist
+        #if not self.contour_line:
+        #    self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, outline='red')
+    
+    def on_left_release(self, event):
+        """ Store oval coordinates on left mouse release """
+        pass
+        #coords = []
+        #coords.append(self.oval_coords["x"])
+        #coords.append(self.oval_coords["y"])
+        #coords.append(self.oval_coords["x2"])
+        #coords.append(self.oval_coords["y2"])
+        #self.final_ovals.append(coords)
+
+    def on_drag(self, event):
+        # Start coords of line
+        self.oval_coords["x"] = event.x
+        self.oval_coords["y"] = event.y
+        self.oval_coords["x2"] = event.x + 5
+        self.oval_coords["y2"] = event.y + 5
+        self.canvas.create_oval(self.oval_coords["x"], 
+                            self.oval_coords["y"], 
+                            self.oval_coords["x2"], 
+                            self.oval_coords["y2"])
+        self.temp_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        # Dynamically update
+        #self.canvas.coords(self.temp_ovals[-1],self.oval_coords["x"], 
+        #                    self.oval_coords["y"], 
+        #                    self.oval_coords["x2"], 
+        #                    self.oval_coords["y2"])
+
     def clear_image(self):
-        self.canvas.delete(self.image)
+        self.canvas.delete("all")
+        self.canvas.config(width=self.image.width(), height=self.image.height())
         self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
 
+
+    def print_values(self):
+        print("There are %d ovals before downszing, their coordinates are below (x, y) top left and (x2, y2) bottom right" % (len(self.temp_ovals)))
+        print(self.temp_ovals)
 
 def main():
 
