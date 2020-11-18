@@ -14,20 +14,15 @@
         - fix: Run in git bash using "py main.py"
 
  Dependencies:
-    Run these commands on a windows command line
-    1) pip install pillow
+    1) pillow
 
  Design Choices:
     1) 
 
- Defintions:
-    Canvas - main screen to work with
-    Frame - organize widgets
-
 """
 import tkinter as tk
 import tkinter.filedialog
-import PIL
+import PIL # Python Image Library
 from PIL import ImageTk, Image
 import os
 
@@ -139,11 +134,14 @@ class ImageViewer(tk.Frame):
         self.master = master
         self.controller.title('Active Contours')
         self.canvas = None
+        self.image_status = None # Track which image is loaded
 
         # Properties to store the contour points 
         self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
-        self.temp_ovals = []
         self.final_ovals = []
+        self.contour_lines = []
+        self.ovals_references = []
+        self.contour_start = 0
 
         # Add additional menu options
         # Easier to add them to access image editing functions  
@@ -155,6 +153,10 @@ class ImageViewer(tk.Frame):
         # Edit image options
         self.file_menu_edit = tk.Menu(controller.menu_bar, tearoff=0)
         controller.menu_bar.add_cascade(label=MENU_3, menu=self.file_menu_edit)
+        self.file_menu_edit.add_command(label='Original', 
+                                command=lambda: self.image_to_original())
+        self.file_menu_edit.add_command(label='Grayscale', 
+                                command=lambda: self.image_to_grayscale())
         self.file_menu_edit.add_command(label='Shrink x2', 
                                 command=lambda: self.resize_image())
         self.file_menu_edit.add_command(label='Clear', 
@@ -165,8 +167,9 @@ class ImageViewer(tk.Frame):
         self.file_menu_debug.add_command(label='Print Variable', 
                                 command=lambda: self.print_values())
 
+
     def load_image(self):
-        
+        self.image_status = "original"
         ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
         PICTURE_DIR = os.path.join(ROOT_DIR, "pictures")
         self.file_name = tk.filedialog.askopenfilename(initialdir=PICTURE_DIR, 
@@ -174,13 +177,20 @@ class ImageViewer(tk.Frame):
                                                     filetypes=[("all images","*.pnm *.png *.jpg")])
         print(self.file_name)
 
-        self.raw_image = Image.open(self.file_name)
-        self.image = ImageTk.PhotoImage(self.raw_image)
-        self.init_UI()
+        # Load image/pixel data and save as variables i'm used to
+        self.original_image = Image.open(self.file_name)
+        self.COLS, self.ROWS = self.original_image.size
+        self.original_pixels = list(self.original_image.getdata())
+        self.init_UI(self.original_image)
 
-    def init_UI(self):
-        print("width and height of image should be ", self.image.width(), self.image.height())
-        self.image_on_canvas = None
+
+    def init_UI(self, image_loader):
+        """
+         Initialize the canvas and load the chosen image
+
+         image_loader - a PIL.Image object to be loaded.
+        """
+        self.image = ImageTk.PhotoImage(image_loader)
         if self.canvas == None:
             self.canvas = tk.Canvas(self, width = self.image.width(), height = self.image.height(), bg='white', cursor="cross")
             self.canvas.pack()
@@ -196,6 +206,34 @@ class ImageViewer(tk.Frame):
         self.controller.geometry(str(self.image.width()) + "x" + str(self.image.height()))
         #self.controller.resizable(False, False)
 
+    ## Functions to modify the image
+    def image_to_grayscale(self):
+        """ Calculate grayscale version of RGB image """
+        if self.image_status == "grayscale":
+            return
+        self.image_status = "grayscale"
+        ROWS = self.ROWS
+        COLS = self.COLS
+        self.grayscale_pixels = []
+        for r in range(ROWS):
+            for c in range(COLS):
+                pixel = self.original_pixels[r*COLS+c]
+                pixel_average = int(sum(pixel) / len(pixel) + 0.5)
+                self.grayscale_pixels.append(pixel_average)
+        new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+        new_image.putdata(self.grayscale_pixels)
+        #new_image.save("grayscale.pnm")
+        self.grayscale_image = new_image
+        self.init_UI(self.grayscale_image)
+    
+    def image_to_original(self):
+        """ Reload orginal image """
+        if self.image_status == "original":
+            return
+        self.image_status = "original"
+        self.init_UI(self.original_image)
+
+
     def resize_image(self):
         self.clear_image()
         max_size = (self.image.width() / 2, self.image.height() / 2)
@@ -203,6 +241,7 @@ class ImageViewer(tk.Frame):
         self.image = ImageTk.PhotoImage(self.raw_image)
         self.init_UI()
     
+
     def init_mouse_events(self):
         """Bind mouse events"""
         # Events:
@@ -214,32 +253,33 @@ class ImageViewer(tk.Frame):
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
 
+
     def on_left_click(self, event):
-        # Start coords of line
+        # Coords and dimensions of oval 
+        self.final_ovals = []
         self.oval_coords["x"] = event.x
         self.oval_coords["y"] = event.y
         self.oval_coords["x2"] = event.x + 5
         self.oval_coords["y2"] = event.y + 5
-        self.canvas.create_oval(self.oval_coords["x"], 
-                                    self.oval_coords["y"], 
-                                    self.oval_coords["x2"], 
-                                    self.oval_coords["y2"])
-        self.temp_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
+                                        self.oval_coords["y"], 
+                                        self.oval_coords["x2"], 
+                                        self.oval_coords["y2"]))
+        self.final_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
 
 
-        # Create contour if it does not already exist
-        #if not self.contour_line:
-        #    self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, outline='red')
-    
     def on_left_release(self, event):
-        """ Store oval coordinates on left mouse release """
-        pass
-        #coords = []
-        #coords.append(self.oval_coords["x"])
-        #coords.append(self.oval_coords["y"])
-        #coords.append(self.oval_coords["x2"])
-        #coords.append(self.oval_coords["y2"])
-        #self.final_ovals.append(coords)
+        """ Keep every fifth oval on mouse release """
+        ovals_new = []
+        for i in range(len(self.final_ovals)):
+            if i % 5 == 0:
+                ovals_new.append(self.final_ovals[i])
+            else:
+                self.canvas.delete(self.ovals_references[i + self.contour_start])
+        self.contour_start = self.contour_start + len(self.final_ovals)
+        self.final_ovals = ovals_new
+        self.contour_lines.append(ovals_new)
+
 
     def on_drag(self, event):
         # Start coords of line
@@ -247,26 +287,28 @@ class ImageViewer(tk.Frame):
         self.oval_coords["y"] = event.y
         self.oval_coords["x2"] = event.x + 5
         self.oval_coords["y2"] = event.y + 5
-        self.canvas.create_oval(self.oval_coords["x"], 
-                            self.oval_coords["y"], 
-                            self.oval_coords["x2"], 
-                            self.oval_coords["y2"])
-        self.temp_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
+                                        self.oval_coords["y"], 
+                                        self.oval_coords["x2"], 
+                                        self.oval_coords["y2"]))
+        self.final_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
         # Dynamically update
-        #self.canvas.coords(self.temp_ovals[-1],self.oval_coords["x"], 
+        #self.canvas.coords(self.final_ovals[-1],self.oval_coords["x"], 
         #                    self.oval_coords["y"], 
         #                    self.oval_coords["x2"], 
         #                    self.oval_coords["y2"])
 
     def clear_image(self):
-        self.canvas.delete("all")
-        self.canvas.config(width=self.image.width(), height=self.image.height())
-        self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
+        for i in range(len(self.ovals_references)):
+            self.canvas.delete(self.ovals_references[i])
+        #self.canvas.config(width=self.image.width(), height=self.image.height())
+        #self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
 
 
     def print_values(self):
-        print("There are %d ovals before downszing, their coordinates are below (x, y) top left and (x2, y2) bottom right" % (len(self.temp_ovals)))
-        print(self.temp_ovals)
+        print("There are %d ovals before downszing, their coordinates are below (x, y) top left and (x2, y2) bottom right" % (len(self.final_ovals)))
+        for contour in self.contour_lines:
+            print(len(contour))
 
 def main():
 
