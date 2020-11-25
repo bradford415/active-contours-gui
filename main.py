@@ -26,6 +26,7 @@ import PIL # Python Image Library
 from PIL import ImageTk, Image
 from math import sqrt
 import os
+import time
 
 HEIGHT = 600
 WIDTH = 700
@@ -41,9 +42,13 @@ LARGE_FONT= ("Verdana", 12)
 OVAL_RADIUS = 5
 WINDOW_SIZE = 7
 
+ITERATIONS = 50
+UPDATE_SPEED = 0.1 # Time in seconds
+
 ALPHA = 1.0 # Internal energy stretch factor
 BETA = 1.0  # Internal energy curvature factor
 GAMMA = 1.0 # External energy factor
+
 class Application(tk.Tk):
 
     def __init__(self, *args, **kwargs):
@@ -162,9 +167,11 @@ class ImageViewer(tk.Frame):
 
         # Properties to store the contour points 
         self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
-        self.final_ovals = []
+        self.final_ovals_coords = []
         self.contour_lines = []
         self.ovals_references = []
+        self.final_ovals_references = []
+        self.contour_lines_references = []
         self.contour_start = 0
 
         # Add additional menu options
@@ -194,10 +201,12 @@ class ImageViewer(tk.Frame):
         # Debug menu options
         self.file_menu_debug = tk.Menu(controller.menu_bar, tearoff=0)
         controller.menu_bar.add_cascade(label=MENU_4, menu=self.file_menu_debug)
-        self.file_menu_debug.add_command(label='Print Variable', 
-                                command=lambda: self.print_values())
+        self.file_menu_debug.add_command(label='Contour Information', 
+                                command=lambda: self.contour_stats_debug())
         self.file_menu_debug.add_command(label='Internal Engery Curvature', 
                                 command=lambda: self.energy_calculations())
+        self.file_menu_debug.add_command(label='Active Contours', 
+                                command=lambda: self.active_contours())
 
 
     def load_image(self):
@@ -360,7 +369,6 @@ class ImageViewer(tk.Frame):
         if self.image_status == "gaussian":
             return
 
-
         if self.gaussian_blur_pixels == []:
             self.convolution_seperable(self.GAUSSIAN_BLUR, self.GAUSSIAN_SIZE)
             self.gaussian_blur_pixels = self.convolution_pixels
@@ -397,9 +405,11 @@ class ImageViewer(tk.Frame):
             self.sobel_y_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_y_pixels]
         if self.sobel_mag_pixels == []:
             self.sobel_mag_pixels = [sqrt((self.sobel_x_pixels[index]*self.sobel_x_pixels[index]) + (self.sobel_y_pixels[index]*self.sobel_y_pixels[index]) )  for index in range(self.ROWS*self.COLS)]
+            self.sobel_mag_pixels_negative = [-1 * value for value in self.sobel_mag_pixels]
             min_val, max_val = min(self.sobel_mag_pixels), max(self.sobel_mag_pixels)
             self.sobel_mag_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels]
-            self.sobel_mag_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.sobel_mag_pixels]
+            min_val, max_val = min(self.sobel_mag_pixels_negative), max(self.sobel_mag_pixels_negative)
+            self.sobel_mag_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
             print("Sobel done")
 
         if mode == 0:
@@ -467,9 +477,7 @@ class ImageViewer(tk.Frame):
 
         self.internal_energy_curvature = []
         self.internal_energy_stretch = []
-        
-        print(self.contour_lines)
-        print("There are %d contour lines" % (len(self.contour_lines)))
+
         # Loop through all contour lines but only testing with one right now
         for contour_line in self.contour_lines:
             int_energy_curve = []
@@ -510,7 +518,7 @@ class ImageViewer(tk.Frame):
                         distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
             
             average_distance = distance / len(contour_line) 
-            point_energy_stretch = [value - average_distance for value in point_energy_stretch]
+            point_energy_stretch = [(average_distance-value)*(average_distance-value) for value in point_energy_stretch]
 
             int_energy_curve.append(point_energy_curve)
             int_energy_stretch.append(point_energy_stretch)
@@ -536,28 +544,45 @@ class ImageViewer(tk.Frame):
                         stretch = self.internal_energy_stretch[contour][point][index]
                         col_coord = self.contour_lines[contour][point][2] + c
                         row_coord = self.contour_lines[contour][point][3] + r 
-                        energy_sum += (curve - val_min_curve) / (val_max_curve - val_min_curve)
-                        energy_sum += (stretch - val_min_stretch) / (val_max_stretch - val_min_stretch)
+                        energy_sum += BETA * ((curve - val_min_curve) / (val_max_curve - val_min_curve))
+                        energy_sum += ALPHA * (stretch - val_min_stretch) / (val_max_stretch - val_min_stretch)
                         index = index + 1
                         if (row_coord) >= 0 and (row_coord) <= self.ROWS and (col_coord) >= 0 and (col_coord) <= self.COLS:
-                            energy_sum += self.sobel_mag_pixels_norm_one[r * self.COLS + c]
+                            energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[r * self.COLS + c])
                         else:
                             energy_sum += 0.0
                         point_energy_sum.append(energy_sum)
                 contour_energy_sum.append(point_energy_sum)
             self.all_energies_sum.append(contour_energy_sum)
-            print(self.all_energies_sum)
-        """
-        if self.gaussian_blur_pixels == []:
-            self.convolution_seperable(self.GAUSSIAN_BLUR, self.GAUSSIAN_SIZE)
-            self.gaussian_blur_pixels = self.convolution_pixels
-            self.external_energy = self.gaussian_blur_pixels
-        else:
-            self.gaussian_blur_pixels = self.convolution_pixels
-            self.external_energy = self.gaussian_blur_pixels
-        """
-    #def active_contours(self):
+        print(self.all_energies_sum)
+            
+    def greedy_minimization(self):
+        for contour in range(len(self.all_energies_sum)):
+            for point in range(len(self.all_energies_sum[contour])):
+                point_ref = self.all_energies_sum[contour][point]
+                oval_ref = self.contour_lines_references[contour][point]
+                offset_c = 0
+                offset_r = 0
+                min_value = point_ref[0]
+                for r in range(WINDOW_SIZE):
+                    for c in range(WINDOW_SIZE):
+                        if point_ref[r*WINDOW_SIZE+c] < min_value:
+                            min_value = point_ref[r*WINDOW_SIZE+c]
+                            offset_c = c
+                            offset_r = r
+                self.canvas.move(oval_ref, (-1*(WINDOW_SIZE//2)) + offset_c, (-1*(WINDOW_SIZE//2)) + offset_r)
+                self.contour_lines[contour][point][0] = self.contour_lines[contour][point][0] - (WINDOW_SIZE//2) + offset_c  
+                self.contour_lines[contour][point][1] = self.contour_lines[contour][point][1] - (WINDOW_SIZE//2) + offset_r 
+                self.contour_lines[contour][point][2] = self.contour_lines[contour][point][2] - (WINDOW_SIZE//2) + offset_c
+                self.contour_lines[contour][point][3] = self.contour_lines[contour][point][3] - (WINDOW_SIZE//2) + offset_r
 
+    def active_contours(self):
+        for i in range(ITERATIONS):
+            self.energy_calculations()
+            self.greedy_minimization()
+            print("Iteration %d finished" % (i))
+            self.canvas.update() # update canvas during the loop
+            time.sleep(UPDATE_SPEED) # argument in seconds
 
 
     def init_mouse_events(self):
@@ -574,7 +599,7 @@ class ImageViewer(tk.Frame):
 
     def on_left_click(self, event):
         # Coords and dimensions of oval 
-        self.final_ovals = []
+        self.final_ovals_coords = []
         self.oval_coords["x"] = event.x
         self.oval_coords["y"] = event.y
         self.oval_coords["x2"] = event.x + OVAL_RADIUS
@@ -583,20 +608,25 @@ class ImageViewer(tk.Frame):
                                         self.oval_coords["y"], 
                                         self.oval_coords["x2"], 
                                         self.oval_coords["y2"]))
-        self.final_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
 
 
     def on_left_release(self, event):
         """ Keep every fifth oval on mouse release """
         ovals_new = []
-        for i in range(len(self.final_ovals)):
+        ovals_new_references = []
+        for i in range(len(self.final_ovals_coords)):
             if i % 5 == 0:
-                ovals_new.append(self.final_ovals[i])
+                ovals_new.append(self.final_ovals_coords[i])
+                ovals_new_references.append(self.ovals_references[i + self.contour_start])
+
             else:
                 self.canvas.delete(self.ovals_references[i + self.contour_start])
-        self.contour_start = self.contour_start + len(self.final_ovals)
-        self.final_ovals = ovals_new
+        self.contour_start = self.contour_start + len(self.final_ovals_coords)
+        self.final_ovals_coords = ovals_new
+        self.final_ovals_references = ovals_new_references
         self.contour_lines.append(ovals_new)
+        self.contour_lines_references.append(ovals_new_references)
 
 
     def on_drag(self, event):
@@ -609,9 +639,9 @@ class ImageViewer(tk.Frame):
                                         self.oval_coords["y"], 
                                         self.oval_coords["x2"], 
                                         self.oval_coords["y2"]))
-        self.final_ovals.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
         # Dynamically update
-        #self.canvas.coords(self.final_ovals[-1],self.oval_coords["x"], 
+        #self.canvas.coords(self.final_ovals_coords[-1],self.oval_coords["x"], 
         #                    self.oval_coords["y"], 
         #                    self.oval_coords["x2"], 
         #                    self.oval_coords["y2"])
@@ -623,10 +653,10 @@ class ImageViewer(tk.Frame):
         #self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
 
 
-    def print_values(self):
-        print("There are %d ovals before downszing, their coordinates are below (x, y) top left and (x2, y2) bottom right" % (len(self.final_ovals)))
-        for contour in self.contour_lines:
-            print(len(contour))
+    def contour_stats_debug(self):
+        print("There is %d contour line(s)" % (len(self.contour_lines)))
+        for i in range(len(self.contour_lines)):
+            print("Contour line %d has %d points" % (i, len(self.contour_lines[i])))
 
 def main():
 
