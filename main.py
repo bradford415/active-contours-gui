@@ -40,10 +40,12 @@ MENU_4 = "Debug"
 LARGE_FONT= ("Verdana", 12)
 
 OVAL_RADIUS = 5
+OUTLINE_COLOR = 'blue' # 'black'
 WINDOW_SIZE = 7
 
-ITERATIONS = 50
-UPDATE_SPEED = 0.1 # Time in seconds
+CONTOUR_DELETION = 5 # keep every i'th contour point 
+ITERATIONS = 30
+UPDATE_SPEED = 0.05 # Time in seconds
 
 ALPHA = 1.0 # Internal energy stretch factor
 BETA = 1.0  # Internal energy curvature factor
@@ -196,6 +198,8 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.sobel_filter(1))
         self.file_menu_edit.add_command(label='Edges', 
                                 command=lambda: self.sobel_filter(2))
+        self.file_menu_edit.add_command(label='Edges Inverted', 
+                                command=lambda: self.sobel_filter(3))
         self.file_menu_edit.add_command(label='Clear', 
                                 command=lambda: self.clear_image())
         # Debug menu options
@@ -221,25 +225,24 @@ class ImageViewer(tk.Frame):
         self.sobel_mag_pixels_norm = []
 
         self.image_status = "original"
-
-        
         
         ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
         PICTURE_DIR = os.path.join(ROOT_DIR, "pictures")
         self.file_name = tk.filedialog.askopenfilename(initialdir=PICTURE_DIR, 
                                                     title="Select a Picture", 
-                                                    filetypes=[("all images","*.pnm *.png *.jpg")])
+                                                    filetypes=[("all images","*.ppm *.pnm *.png *.jpg")])
         print(self.file_name)
 
         # Load image/pixel data and save as variables i'm used to
         self.original_image = Image.open(self.file_name)
         self.COLS, self.ROWS = self.original_image.size
+        self.image_type = self.original_image.mode
         self.original_pixels = list(self.original_image.getdata())
 
         # Perform convolutions and image processing on image load
-        self.sobel_filter(3)
-        self.gaussian_smoothing(3)
-        self.image_to_grayscale(3)
+        self.sobel_filter(4)
+        self.gaussian_smoothing(4)
+        self.image_to_grayscale(4)
 
         self.init_UI(self.original_image)
 
@@ -273,6 +276,12 @@ class ImageViewer(tk.Frame):
         """ Convert grayscale pixels and store in property """
         ROWS = self.ROWS
         COLS = self.COLS
+        if self.image_type == 'L': # if original image is already grayscale
+            for r in range(ROWS):
+                for c in range(COLS):
+                    self.grayscale_pixels.append(self.original_pixels[r*COLS+c])
+            return
+
         self.grayscale_pixels = []
         for r in range(ROWS):
             for c in range(COLS):
@@ -409,6 +418,7 @@ class ImageViewer(tk.Frame):
             min_val, max_val = min(self.sobel_mag_pixels), max(self.sobel_mag_pixels)
             self.sobel_mag_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels]
             min_val, max_val = min(self.sobel_mag_pixels_negative), max(self.sobel_mag_pixels_negative)
+            self.sobel_mag_pixels_norm_inverted = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
             self.sobel_mag_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
             print("Sobel done")
 
@@ -442,6 +452,16 @@ class ImageViewer(tk.Frame):
                 self.sobel_mag_image = new_image
                 self.init_UI(self.sobel_mag_image)
                 print("Sobel Edges loaded")
+        elif mode == 3:
+            if self.image_status == "sobel_norm_inverted":
+                return
+            else:
+                self.image_status = "sobel_norm_inverted"
+                new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+                new_image.putdata(self.sobel_mag_pixels_norm_inverted)
+                self.sobel_mag_inverted_image = new_image
+                self.init_UI(self.sobel_mag_inverted_image)
+                print("Sobel Edges Inverted loaded")
         else:
             return
                 
@@ -473,7 +493,7 @@ class ImageViewer(tk.Frame):
         """ 
 
         if self.sobel_mag_pixels == []:
-            self.sobel_filter(3)
+            self.sobel_filter(4)
 
         self.internal_energy_curvature = []
         self.internal_energy_stretch = []
@@ -482,24 +502,36 @@ class ImageViewer(tk.Frame):
         for contour_line in self.contour_lines:
             int_energy_curve = []
             int_energy_stretch = []
+            
+            # Calcuate average distance between all contour points 
             distance = 0
+            for index in range(len(contour_line) - 1):
+                x_distance = contour_line[index+1][2] - (contour_line[index][2])
+                y_distance = contour_line[index+1][3] - (contour_line[index][3])
+                distance += sqrt((x_distance*x_distance) + (y_distance*y_distance))
+            x_distance = contour_line[0][2] - (contour_line[-1][2])
+            y_distance = contour_line[0][3] - (contour_line[-1][3])
+            distance += sqrt((x_distance*x_distance) + (y_distance*y_distance))
+            average_distance = distance / len(contour_line) 
+
             for index in range(len(contour_line) - 1):
                 i = 0
                 point_energy_curve = []
                 point_energy_stretch = []
-                distance = 0
                 for r in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
                     for c in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
-                        x_term_curve = contour_line[index+1][2] - 2*(contour_line[index][2]+c) + contour_line[index-1][2]  
+                        x_term_curve = contour_line[index+1][2] - 2*(contour_line[index][2]+c) + contour_line[index-1][2] # internal energy curve (attempt 1)
                         y_term_curve = contour_line[index+1][3] - 2*(contour_line[index][3]+r) + contour_line[index-1][3]
-                        x_term_stretch = contour_line[index+1][2] - (contour_line[index][2]+c)  
+                        #x_term_curve = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy curve (attempt 2)
+                        #y_term_curve = contour_line[index+1][3] - (contour_line[index][3]+r)
+                        x_term_stretch = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy stretch
                         y_term_stretch = contour_line[index+1][3] - (contour_line[index][3]+r)  
                         point_energy_curve.append((x_term_curve*x_term_curve)  + (y_term_curve*y_term_curve))
-                        point_energy_stretch.append((x_term_stretch*x_term_stretch)  + (x_term_stretch*x_term_stretch))
+                        point_energy_stretch.append((x_term_stretch*x_term_stretch)  + (y_term_stretch*y_term_stretch))
                         
-                        if r == 0 and c == 0:
-                            distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
-
+                        #if r == 0 and c == 0:
+                        #    distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
+                point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
                 int_energy_curve.append(point_energy_curve)
                 int_energy_stretch.append(point_energy_stretch)
 
@@ -509,22 +541,22 @@ class ImageViewer(tk.Frame):
                 for c in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
                     x_term_curve = contour_line[0][2] - 2*(contour_line[-1][2]+c) + contour_line[-2][2]  
                     y_term_curve = contour_line[0][3] - 2*(contour_line[-1][3]+r) + contour_line[-2][3]
-                    x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)  
+                    #x_term_curve = contour_line[0][2] - (contour_line[-1][2]+c) # internal energy curve (attempt 2)
+                    #y_term_curve = contour_line[0][3] - (contour_line[-1][3]+r)
+                    x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)   
                     y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)   
                     point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
-                    point_energy_stretch.append((x_term_stretch*x_term_stretch) + (x_term_stretch*x_term_stretch))
+                    point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
                     
-                    if r == 0 and c == 0:
-                        distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
+                    #if r == 0 and c == 0:
+                    #    distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
             
-            average_distance = distance / len(contour_line) 
-            point_energy_stretch = [(average_distance-value)*(average_distance-value) for value in point_energy_stretch]
-
+            point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
             int_energy_curve.append(point_energy_curve)
             int_energy_stretch.append(point_energy_stretch)
             
-        self.internal_energy_curvature.append(int_energy_curve)
-        self.internal_energy_stretch.append(int_energy_stretch)
+            self.internal_energy_curvature.append(int_energy_curve)
+            self.internal_energy_stretch.append(int_energy_stretch)
 
         # Normalize all energies between 0-1
         self.all_energies_sum = []
@@ -545,16 +577,23 @@ class ImageViewer(tk.Frame):
                         col_coord = self.contour_lines[contour][point][2] + c
                         row_coord = self.contour_lines[contour][point][3] + r 
                         energy_sum += BETA * ((curve - val_min_curve) / (val_max_curve - val_min_curve))
-                        energy_sum += ALPHA * (stretch - val_min_stretch) / (val_max_stretch - val_min_stretch)
+                        energy_sum += ALPHA * ((stretch - val_min_stretch) / (val_max_stretch - val_min_stretch))
                         index = index + 1
-                        if (row_coord) >= 0 and (row_coord) <= self.ROWS and (col_coord) >= 0 and (col_coord) <= self.COLS:
-                            energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[r * self.COLS + c])
+                        if row_coord >= 0 and row_coord <= self.ROWS and col_coord >= 0 and col_coord <= self.COLS:
+                            energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[row_coord * self.COLS + col_coord])
                         else:
                             energy_sum += 0.0
                         point_energy_sum.append(energy_sum)
                 contour_energy_sum.append(point_energy_sum)
             self.all_energies_sum.append(contour_energy_sum)
-        print(self.all_energies_sum)
+        for contour in self.all_energies_sum:
+            for point in contour:
+                for i in range(1,WINDOW_SIZE*WINDOW_SIZE+1):
+                    print("%f  " % (point[i-1]), end='')
+                    if i % WINDOW_SIZE == 0:
+                        print("")
+                print("")
+                print("")
             
     def greedy_minimization(self):
         for contour in range(len(self.all_energies_sum)):
@@ -607,7 +646,8 @@ class ImageViewer(tk.Frame):
         self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
                                         self.oval_coords["y"], 
                                         self.oval_coords["x2"], 
-                                        self.oval_coords["y2"]))
+                                        self.oval_coords["y2"],
+                                        outline=OUTLINE_COLOR))
         self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
 
 
@@ -616,7 +656,7 @@ class ImageViewer(tk.Frame):
         ovals_new = []
         ovals_new_references = []
         for i in range(len(self.final_ovals_coords)):
-            if i % 5 == 0:
+            if i % CONTOUR_DELETION == 0:
                 ovals_new.append(self.final_ovals_coords[i])
                 ovals_new_references.append(self.ovals_references[i + self.contour_start])
 
@@ -638,7 +678,8 @@ class ImageViewer(tk.Frame):
         self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
                                         self.oval_coords["y"], 
                                         self.oval_coords["x2"], 
-                                        self.oval_coords["y2"]))
+                                        self.oval_coords["y2"],
+                                        outline=OUTLINE_COLOR))
         self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
         # Dynamically update
         #self.canvas.coords(self.final_ovals_coords[-1],self.oval_coords["x"], 
