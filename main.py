@@ -42,14 +42,16 @@ LARGE_FONT= ("Verdana", 12)
 OVAL_RADIUS = 5
 OUTLINE_COLOR = 'blue' # 'black'
 WINDOW_SIZE = 7
+REQUIRED_POINTS = 8 # The number of required points in a contour line
 
 CONTOUR_DELETION = 5 # keep every i'th contour point 
-ITERATIONS = 30
-UPDATE_SPEED = 0.05 # Time in seconds
+ITERATIONS = 150
+UPDATE_SPEED = 0.02 # Time Time in seconds 
 
-ALPHA = 1.0 # Internal energy stretch factor
-BETA = 1.0  # Internal energy curvature factor
-GAMMA = 1.0 # External energy factor
+ALPHA = 1.5 # Internal energy -> stretch/elasticity factor
+BETA = 1.0  # Internal energy  -> curvature factor
+GAMMA = 1.0 # External energy factor -> negative gradient magnitude
+DELTA = 0.5 # External energy factor -> grayscale intensity
 
 class Application(tk.Tk):
 
@@ -192,6 +194,12 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.image_to_grayscale(0))
         self.file_menu_edit.add_command(label='Gaussian Blur', 
                                 command=lambda: self.gaussian_smoothing(0))
+        self.file_menu_edit.add_command(label='Red Channel', 
+                                command=lambda: self.image_to_channels(self.red_channel))
+        self.file_menu_edit.add_command(label='Blue Channel', 
+                                command=lambda: self.image_to_channels(self.blue_channel))
+        self.file_menu_edit.add_command(label='Green Channel', 
+                                command=lambda: self.image_to_channels(self.green_channel))
         self.file_menu_edit.add_command(label='Gradient X', 
                                 command=lambda: self.sobel_filter(0))
         self.file_menu_edit.add_command(label='Gradient Y', 
@@ -216,6 +224,13 @@ class ImageViewer(tk.Frame):
     def load_image(self):
         # Clear variables from previous image
         self.grayscale_pixels = []
+        self.grayscale_pixels_norm_one = []
+        #self.red_pixels = []
+        #self.red_channel = []
+        #self.green_pixels = []
+        #self.green_channel = []
+        #self.blue_pixels = []
+        #self.blue_channel = []
         self.gaussian_blur_pixels = []
         self.sobel_x_pixels = []
         self.sobel_x_pixels_norm = []
@@ -223,6 +238,8 @@ class ImageViewer(tk.Frame):
         self.sobel_y_pixels_norm = []
         self.sobel_mag_pixels = []
         self.sobel_mag_pixels_norm = []
+        self.gvf_pixels = [] # gvf = gradient vector flow
+        self.clear_image()
 
         self.image_status = "original"
         
@@ -238,11 +255,25 @@ class ImageViewer(tk.Frame):
         self.COLS, self.ROWS = self.original_image.size
         self.image_type = self.original_image.mode
         self.original_pixels = list(self.original_image.getdata())
+        if self.image_type != 'L':
+            self.red_channel = [(d[0],0,0) for d in self.original_pixels]
+            self.red_pixels = [d[0] for d in self.original_pixels]
+            min_val, max_val = min(self.red_pixels), max(self.red_pixels)
+            self.red_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.red_pixels]
+            self.green_channel = [(0, d[1], 0) for d in self.original_pixels]
+            self.green_pixels = [d[1] for d in self.original_pixels]
+            min_val, max_val = min(self.green_pixels), max(self.green_pixels)
+            self.green_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.green_pixels]
+            self.blue_channel = [(0, 0, d[2]) for d in self.original_pixels]
+            self.blue_pixels = [d[2] for d in self.original_pixels]
+            min_val, max_val = min(self.blue_pixels), max(self.blue_pixels)
+            self.blue_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.blue_pixels]
+            
 
         # Perform convolutions and image processing on image load
+        self.image_to_grayscale(4)
         self.sobel_filter(4)
         self.gaussian_smoothing(4)
-        self.image_to_grayscale(4)
 
         self.init_UI(self.original_image)
 
@@ -270,8 +301,6 @@ class ImageViewer(tk.Frame):
         #self.controller.resizable(False, False)
 
 
-    ## Functions to modify the image
-
     def pixels_to_grayscale(self):
         """ Convert grayscale pixels and store in property """
         ROWS = self.ROWS
@@ -297,6 +326,8 @@ class ImageViewer(tk.Frame):
             
         if self.grayscale_pixels == []:
             self.pixels_to_grayscale()
+            min_val, max_val = min(self.grayscale_pixels), max(self.grayscale_pixels)
+            self.grayscale_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.grayscale_pixels]
         
         if mode == 0:
             self.image_status = "grayscale"
@@ -308,6 +339,16 @@ class ImageViewer(tk.Frame):
             print("Grayscale Loaded")
         else:
             return
+
+
+    def image_to_channels(self, channel):
+        """Load the R, G, or B channel of the image"""
+        self.image_status = "channel"
+        new_image = Image.new(mode="RGBA", size = (self.COLS, self.ROWS))
+        new_image.putdata(channel)
+        self.channel_image = new_image
+        self.init_UI(self.channel_image)
+        print("Channel Loaded")
 
 
     def convolution_seperable(self, kernel, kernel_size):
@@ -489,7 +530,18 @@ class ImageViewer(tk.Frame):
         Stored as: [[[x1, y1], [x2, y2]], <--- energy for contour line 1
                     [[x1, y1], [x2, y2]]] <--- energy for contour line 2
 
+        Internal energies:
         formula_curvature = |V(i+1)-2Vi+V(i-1)|^2 -> (X(i+1)-2Xi+X(i-1))^2 + (Y(i+1)-2Yi+Y(i-1))^2 
+
+        formula_stretch/elasticity = (average_distance_x - sqrt((X(i+1)-X(i))^2 + (Y(i+1)-Y(i))^2)))^2
+
+        Graveyard (Failed energies):
+            1) Calculating the distance between each color channel from the sliding pixel
+               in the window, and the center of the window pixel
+               - external energy
+               - this worked a little bit but was not successful in complex images
+             
+
         """ 
 
         if self.sobel_mag_pixels == []:
@@ -498,7 +550,7 @@ class ImageViewer(tk.Frame):
         self.internal_energy_curvature = []
         self.internal_energy_stretch = []
 
-        # Loop through all contour lines but only testing with one right now
+        # Loop through all contour lines
         for contour_line in self.contour_lines:
             int_energy_curve = []
             int_energy_stretch = []
@@ -529,8 +581,6 @@ class ImageViewer(tk.Frame):
                         point_energy_curve.append((x_term_curve*x_term_curve)  + (y_term_curve*y_term_curve))
                         point_energy_stretch.append((x_term_stretch*x_term_stretch)  + (y_term_stretch*y_term_stretch))
                         
-                        #if r == 0 and c == 0:
-                        #    distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
                 point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
                 int_energy_curve.append(point_energy_curve)
                 int_energy_stretch.append(point_energy_stretch)
@@ -548,9 +598,6 @@ class ImageViewer(tk.Frame):
                     point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
                     point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
                     
-                    #if r == 0 and c == 0:
-                    #    distance += sqrt((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
-            
             point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
             int_energy_curve.append(point_energy_curve)
             int_energy_stretch.append(point_energy_stretch)
@@ -581,11 +628,22 @@ class ImageViewer(tk.Frame):
                         index = index + 1
                         if row_coord >= 0 and row_coord <= self.ROWS and col_coord >= 0 and col_coord <= self.COLS:
                             energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            if self.image_type == 'L':
+                                energy_sum += DELTA * (self.grayscale_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            else:
+                                center_pixel = self.contour_lines[contour][point][3] + r * self.COLS + self.contour_lines[contour][point][2]
+                                sliding_pixel = row_coord * self.COLS + col_coord
+                                red_difference = self.red_pixels_norm_one[sliding_pixel] - self.red_pixels_norm_one[center_pixel]
+                                green_difference = self.green_pixels_norm_one[sliding_pixel] - self.green_pixels_norm_one[center_pixel]
+                                blue_difference = self.blue_pixels_norm_one[sliding_pixel] - self.blue_pixels_norm_one[center_pixel]
+                                energy_sum += DELTA * (red_difference*red_difference + green_difference*green_difference + blue_difference*blue_difference)
                         else:
                             energy_sum += 0.0
                         point_energy_sum.append(energy_sum)
                 contour_energy_sum.append(point_energy_sum)
             self.all_energies_sum.append(contour_energy_sum)
+        """
+        uncomment to print energy sums for each contour point
         for contour in self.all_energies_sum:
             for point in contour:
                 for i in range(1,WINDOW_SIZE*WINDOW_SIZE+1):
@@ -594,7 +652,7 @@ class ImageViewer(tk.Frame):
                         print("")
                 print("")
                 print("")
-            
+        """
     def greedy_minimization(self):
         for contour in range(len(self.all_energies_sum)):
             for point in range(len(self.all_energies_sum[contour])):
@@ -619,7 +677,7 @@ class ImageViewer(tk.Frame):
         for i in range(ITERATIONS):
             self.energy_calculations()
             self.greedy_minimization()
-            print("Iteration %d finished" % (i))
+            #print("Iteration %d finished" % (i))
             self.canvas.update() # update canvas during the loop
             time.sleep(UPDATE_SPEED) # argument in seconds
 
@@ -665,9 +723,15 @@ class ImageViewer(tk.Frame):
         self.contour_start = self.contour_start + len(self.final_ovals_coords)
         self.final_ovals_coords = ovals_new
         self.final_ovals_references = ovals_new_references
-        self.contour_lines.append(ovals_new)
-        self.contour_lines_references.append(ovals_new_references)
-
+        
+        if len(ovals_new) >= REQUIRED_POINTS:
+            self.contour_lines.append(ovals_new) 
+            self.contour_lines_references.append(ovals_new_references)
+        else:
+            for oval in ovals_new_references:
+                 self.canvas.delete(oval)
+        # self.contour_lines contains every contour line and their pixel points
+        # contour_lines_references contains the references created by tkiner - used to move and delete points
 
     def on_drag(self, event):
         # Start coords of line
@@ -688,8 +752,16 @@ class ImageViewer(tk.Frame):
         #                    self.oval_coords["y2"])
 
     def clear_image(self):
-        for i in range(len(self.ovals_references)):
-            self.canvas.delete(self.ovals_references[i])
+        for contour in self.contour_lines_references:
+            for point in contour:
+                self.canvas.delete(point)
+        self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
+        self.final_ovals_coords = []
+        self.contour_lines = []
+        self.ovals_references = []
+        self.final_ovals_references = []
+        self.contour_lines_references = []
+        self.contour_start = 0
         #self.canvas.config(width=self.image.width(), height=self.image.height())
         #self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
 
