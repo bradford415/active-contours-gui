@@ -39,19 +39,27 @@ MENU_4 = "Debug"
 
 LARGE_FONT= ("Verdana", 12)
 
+# General Parameters
+ITERATIONS = 150
+UPDATE_SPEED = 0.02 # Time Time in seconds 
 OVAL_RADIUS = 5
 OUTLINE_COLOR = 'blue' # 'black'
 WINDOW_SIZE = 7
+
+# Balloon Model Parameters
+CIRCLE_RADIUS = 10
+CONTOUR_DELETION_BALLOON = 3 # keep every i'th point
+
+# Rubber-band Model Parameters 
+CONTOUR_DELETION = 5 # keep every i'th contour point 
 REQUIRED_POINTS = 8 # The number of required points in a contour line
 
-CONTOUR_DELETION = 5 # keep every i'th contour point 
-ITERATIONS = 150
-UPDATE_SPEED = 0.02 # Time Time in seconds 
-
-ALPHA = 1.5 # Internal energy -> stretch/elasticity factor
-BETA = 1.0  # Internal energy  -> curvature factor
-GAMMA = 1.0 # External energy factor -> negative gradient magnitude
-DELTA = 0.5 # External energy factor -> grayscale intensity
+# Set this term to 0 if you wish to exclude an energy 
+ALPHA = 1.0 # Internal energy factor -> stretch/elasticity factor
+BETA = 1.0  # Internal energy factor -> curvature factor
+GAMMA = 0.0 # External energy factor -> negative gradient magnitude
+DELTA = 0.0 # External energy factor -> grayscale intensity
+EPSILON = 1.0 # External energy factor -> gradient vector flow/field
 
 class Application(tk.Tk):
 
@@ -176,7 +184,13 @@ class ImageViewer(tk.Frame):
         self.ovals_references = []
         self.final_ovals_references = []
         self.contour_lines_references = []
-        self.contour_start = 0
+        self.balloon_final_ovals_coords = []
+        self.balloon_ovals_references = []
+        self.balloon_final_ovals_references = []
+        self.balloon_contour_lines = []
+        self.balloon_contour_lines_references = []
+        self.contour_start = 0 # used for contour point deletion
+        self.balloon_contour_start = 0
 
         # Add additional menu options
         # Easier to add them to access image editing functions  
@@ -193,7 +207,7 @@ class ImageViewer(tk.Frame):
         self.file_menu_edit.add_command(label='Grayscale', 
                                 command=lambda: self.image_to_grayscale(0))
         self.file_menu_edit.add_command(label='Gaussian Blur', 
-                                command=lambda: self.gaussian_smoothing(0))
+                                command=lambda: self.gaussian_smoothing(0, "grayscale"))
         self.file_menu_edit.add_command(label='Red Channel', 
                                 command=lambda: self.image_to_channels(self.red_channel))
         self.file_menu_edit.add_command(label='Blue Channel', 
@@ -201,13 +215,19 @@ class ImageViewer(tk.Frame):
         self.file_menu_edit.add_command(label='Green Channel', 
                                 command=lambda: self.image_to_channels(self.green_channel))
         self.file_menu_edit.add_command(label='Gradient X', 
-                                command=lambda: self.sobel_filter(0))
+                                command=lambda: self.sobel_filter(0, "grayscale"))
         self.file_menu_edit.add_command(label='Gradient Y', 
-                                command=lambda: self.sobel_filter(1))
+                                command=lambda: self.sobel_filter(1, "grayscale"))
         self.file_menu_edit.add_command(label='Edges', 
-                                command=lambda: self.sobel_filter(2))
+                                command=lambda: self.sobel_filter(2, "grayscale"))
         self.file_menu_edit.add_command(label='Edges Inverted', 
-                                command=lambda: self.sobel_filter(3))
+                                command=lambda: self.sobel_filter(3, "grayscale"))
+        self.file_menu_edit.add_command(label='Edges Blurred', 
+                                command=lambda: self.gaussian_smoothing(1, "edges"))
+        self.file_menu_edit.add_command(label='Gradient Vector Field (GVF)', 
+                                command=lambda: self.sobel_filter(4, "blur"))
+        self.file_menu_edit.add_command(label='GVF Inverted', 
+                                command=lambda: self.sobel_filter(5, "blur"))
         self.file_menu_edit.add_command(label='Clear', 
                                 command=lambda: self.clear_image())
         # Debug menu options
@@ -238,7 +258,16 @@ class ImageViewer(tk.Frame):
         self.sobel_y_pixels_norm = []
         self.sobel_mag_pixels = []
         self.sobel_mag_pixels_norm = []
-        self.gvf_pixels = [] # gvf = gradient vector flow
+        self.sobel_x_blur_pixels = []
+        self.sobel_y_blur_pixels = []
+        self.edges_blur_pixels = [] 
+        self.edges_blur_pixels_norm = [] 
+        self.edges_blur_pixels_norm_one = []
+        self.gvf_pixels = [] 
+        self.gvf_pixels_negative = []
+        self.gvf_pixels_norm = [] 
+        self.gvf_pixels_norm_one = [] 
+        self.gvf_pixels_norm_inverted = [] 
         self.clear_image()
 
         self.image_status = "original"
@@ -272,8 +301,12 @@ class ImageViewer(tk.Frame):
 
         # Perform convolutions and image processing on image load
         self.image_to_grayscale(4)
-        self.sobel_filter(4)
-        self.gaussian_smoothing(4)
+        self.gaussian_smoothing(4, "grayscale")
+        self.sobel_filter(6,"blur")
+        if GAMMA > 0.0:
+            self.sobel_filter(6,"grayscale")
+            self.gaussian_smoothing(4, "edges")
+
 
         self.init_UI(self.original_image)
 
@@ -295,7 +328,6 @@ class ImageViewer(tk.Frame):
             self.canvas.config(width=self.image.width(), height=self.image.height())
             self.canvas.create_image(0, 0, image=self.image, anchor="nw")
 
-        #self.canvas.grid(row=0, column=0)
         self.controller.enable_menu(MENU_3)
         self.controller.geometry(str(self.image.width()) + "x" + str(self.image.height()))
         #self.controller.resizable(False, False)
@@ -351,8 +383,14 @@ class ImageViewer(tk.Frame):
         print("Channel Loaded")
 
 
-    def convolution_seperable(self, kernel, kernel_size):
-        """ Convolve the loaded image with separable filters """
+    def convolution_seperable(self, kernel, kernel_size, image):
+        """ 
+         Convolve the loaded image with separable filters 
+        
+         image - a string denoting which pixels to blur
+                 "grayscale" to blur grayscale image
+                 "edges" to blur the sobel magnitude
+        """
         ROWS = self.ROWS
         COLS = self.COLS
         self.temp_pixels = [] # store the intermediate steps of convolution
@@ -361,6 +399,12 @@ class ImageViewer(tk.Frame):
         # Compute grayscale pixels if not already done
         if self.grayscale_pixels == []:
             self.pixels_to_grayscale()
+
+        pixels_to_convolve = []
+        if image == "grayscale":
+            pixels_to_convolve = self.grayscale_pixels
+        elif image == "edges":
+            pixels_to_convolve = self.sobel_mag_pixels
 
         r2 = 0
         for r in range(ROWS):
@@ -371,7 +415,7 @@ class ImageViewer(tk.Frame):
                     if((c + c2 < 0) or (c + c2 >= COLS)):
                         pixel_sum += 0
                     else:
-                        pixel_sum += self.grayscale_pixels[((r+r2)*COLS)+(c+c2)] * kernel[kernel_index]
+                        pixel_sum += pixels_to_convolve[((r+r2)*COLS)+(c+c2)] * kernel[kernel_index]
                     kernel_index = kernel_index + 1
                 self.temp_pixels.append(pixel_sum)
 
@@ -389,8 +433,14 @@ class ImageViewer(tk.Frame):
                     kernel_index = kernel_index + 1
                 self.convolution_pixels.append(int(pixel_sum + 0.5))
 
-    def convolution_2d(self, kernel, kernel_size):
-        """ Convolve the loaded image with 2d convolution filters """
+    def convolution_2d(self, kernel, kernel_size, image):
+        """ 
+         Convolve the loaded image with 2d convolution filters
+        
+         image - a string denoting which pixels to blur
+                 "grayscale" to blur grayscale image
+                 "edges" to blur the sobel magnitude and create the gradient vector flow 
+        """
         ROWS = self.ROWS
         COLS = self.COLS
         self.temp_pixels = [] # store the intermediate steps of convolution
@@ -399,6 +449,12 @@ class ImageViewer(tk.Frame):
         # Compute grayscale pixels if not already done
         if self.grayscale_pixels == []:
             self.pixels_to_grayscale()
+
+        pixels_to_convolve = []
+        if image == "grayscale":
+            pixels_to_convolve = self.grayscale_pixels
+        elif image == "blur":
+            pixels_to_convolve = self.gaussian_blur_pixels
 
         for r in range(ROWS):
             for c in range(COLS): 
@@ -410,31 +466,51 @@ class ImageViewer(tk.Frame):
                         if (c + c2 < 0) or (c + c2 >= COLS) or (r + r2 < 0) or (r + r2 >= ROWS):
                             pixel_sum += 0
                         else:
-                            pixel_sum += self.grayscale_pixels[((r+r2)*COLS)+(c+c2)] * kernel[kernel_index]
+                            pixel_sum += pixels_to_convolve[((r+r2)*COLS)+(c+c2)] * kernel[kernel_index]
                         kernel_index = kernel_index + 1
                 self.convolution_pixels.append(pixel_sum)
 
 
-    def gaussian_smoothing(self, mode):
+    def gaussian_smoothing(self, mode, image):
+        """
+         Calculate gaussian blur and gvf if not already done, then dispaly either image
+        
+         mode - 0 -> grayscale blur, 1 -> edges blur 
+        """
         if self.image_status == "gaussian":
             return
 
         if self.gaussian_blur_pixels == []:
-            self.convolution_seperable(self.GAUSSIAN_BLUR, self.GAUSSIAN_SIZE)
-            self.gaussian_blur_pixels = self.convolution_pixels
-            new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
-            new_image.putdata(self.gaussian_blur_pixels)
-            #new_image.save("gaussian.pnm")
-            self.gaussian_image = new_image
+            if image == "grayscale":
+                self.convolution_seperable(self.GAUSSIAN_BLUR, self.GAUSSIAN_SIZE, image)
+                self.gaussian_blur_pixels = self.convolution_pixels
+                new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+                new_image.putdata(self.gaussian_blur_pixels)
+                self.gaussian_image = new_image
+        if self.edges_blur_pixels == []:
+            if image == "edges":
+                self.convolution_seperable(self.GAUSSIAN_BLUR, self.GAUSSIAN_SIZE, image)
+                self.edges_blur_pixels = self.convolution_pixels
+                min_val, max_val = min(self.edges_blur_pixels), max(self.edges_blur_pixels)
+                self.edges_blur_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.edges_blur_pixels]
+                self.edges_blur_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.edges_blur_pixels]
+                new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+                new_image.putdata(self.edges_blur_pixels_norm)
+                self.edges_blur_image = new_image
+            
         if mode == 0:
             self.image_status = "gaussian"
             self.init_UI(self.gaussian_image)
             print("Gaussian Smoothing Loaded")
+        if mode == 1:
+            self.image_status = "edges blur"
+            self.init_UI(self.edges_blur_image)
+            print("Blurred edge loaded")
         else:
             return
 
 
-    def sobel_filter(self, mode):
+    def sobel_filter(self, mode, image):
         """
          compute x and y gradients of the sobel filter along with the magnitude image
 
@@ -444,24 +520,45 @@ class ImageViewer(tk.Frame):
                     2 -> magnitude gradient
         """
         if self.sobel_x_pixels == []:
-            self.convolution_2d(self.SOBEL_X, self.SOBEL_SIZE)
-            self.sobel_x_pixels = self.convolution_pixels
-            min_val, max_val = min(self.sobel_x_pixels), max(self.sobel_x_pixels)
-            self.sobel_x_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_x_pixels]
+            if image == "grayscale":
+                self.convolution_2d(self.SOBEL_X, self.SOBEL_SIZE, image)
+                self.sobel_x_pixels = self.convolution_pixels
+                min_val, max_val = min(self.sobel_x_pixels), max(self.sobel_x_pixels)
+                self.sobel_x_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_x_pixels]
+        if self.sobel_x_blur_pixels == []:
+            if image == "blur":
+                self.convolution_2d(self.SOBEL_X, self.SOBEL_SIZE, "blur")
+                self.sobel_x_blur_pixels = self.convolution_pixels
         if self.sobel_y_pixels == []:
-            self.convolution_2d(self.SOBEL_Y, self.SOBEL_SIZE)
-            self.sobel_y_pixels = self.convolution_pixels
-            min_val, max_val = min(self.sobel_y_pixels), max(self.sobel_y_pixels)
-            self.sobel_y_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_y_pixels]
+            if image == "grayscale":
+                self.convolution_2d(self.SOBEL_Y, self.SOBEL_SIZE, image)
+                self.sobel_y_pixels = self.convolution_pixels
+                min_val, max_val = min(self.sobel_y_pixels), max(self.sobel_y_pixels)
+                self.sobel_y_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_y_pixels]
+        if self.sobel_y_blur_pixels == []:
+            if image == "blur":
+                self.convolution_2d(self.SOBEL_Y, self.SOBEL_SIZE, image)
+                self.sobel_y_blur_pixels = self.convolution_pixels
         if self.sobel_mag_pixels == []:
-            self.sobel_mag_pixels = [sqrt((self.sobel_x_pixels[index]*self.sobel_x_pixels[index]) + (self.sobel_y_pixels[index]*self.sobel_y_pixels[index]) )  for index in range(self.ROWS*self.COLS)]
-            self.sobel_mag_pixels_negative = [-1 * value for value in self.sobel_mag_pixels]
-            min_val, max_val = min(self.sobel_mag_pixels), max(self.sobel_mag_pixels)
-            self.sobel_mag_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels]
-            min_val, max_val = min(self.sobel_mag_pixels_negative), max(self.sobel_mag_pixels_negative)
-            self.sobel_mag_pixels_norm_inverted = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
-            self.sobel_mag_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
-            print("Sobel done")
+            if image == "grayscale":
+                self.sobel_mag_pixels = [sqrt((self.sobel_x_pixels[index]*self.sobel_x_pixels[index]) + (self.sobel_y_pixels[index]*self.sobel_y_pixels[index]) )  for index in range(self.ROWS*self.COLS)]
+                self.sobel_mag_pixels_negative = [-1 * value for value in self.sobel_mag_pixels]
+                min_val, max_val = min(self.sobel_mag_pixels), max(self.sobel_mag_pixels)
+                self.sobel_mag_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels]
+                min_val, max_val = min(self.sobel_mag_pixels_negative), max(self.sobel_mag_pixels_negative)
+                self.sobel_mag_pixels_norm_inverted = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
+                self.sobel_mag_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.sobel_mag_pixels_negative]
+                print("Sobel done")
+        if self.gvf_pixels == []:
+            if image == "blur":
+                self.gvf_pixels = [sqrt((self.sobel_x_blur_pixels[index]*self.sobel_x_blur_pixels[index]) + (self.sobel_y_blur_pixels[index]*self.sobel_y_blur_pixels[index]))  for index in range(self.ROWS*self.COLS)]
+                self.gvf_pixels_negative = [-1 * value for value in self.gvf_pixels]
+                min_val, max_val = min(self.gvf_pixels), max(self.gvf_pixels)
+                self.gvf_pixels_norm = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.gvf_pixels]
+                min_val, max_val = min(self.gvf_pixels_negative), max(self.gvf_pixels_negative)
+                self.gvf_pixels_norm_inverted = [(((i - min_val) * 255) / (max_val - min_val)) for i in self.gvf_pixels_negative]
+                self.gvf_pixels_norm_one = [(((i - min_val) * 1) / (max_val - min_val)) for i in self.gvf_pixels_negative]
+                print("GVF done")
 
         if mode == 0:
             if self.image_status == "sobel_x":
@@ -503,6 +600,26 @@ class ImageViewer(tk.Frame):
                 self.sobel_mag_inverted_image = new_image
                 self.init_UI(self.sobel_mag_inverted_image)
                 print("Sobel Edges Inverted loaded")
+        elif mode == 4:
+            if self.image_status == "gvf":
+                return
+            else:
+                self.image_status = "gvf"
+                new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+                new_image.putdata(self.gvf_pixels_norm)
+                self.gvf_image = new_image
+                self.init_UI(self.gvf_image)
+                print("gvf loaded")
+        elif mode == 5:
+            if self.image_status == "gvf_inverted":
+                return
+            else:
+                self.image_status = "gvf_inverted"
+                new_image = Image.new(mode="L", size = (self.COLS, self.ROWS))
+                new_image.putdata(self.gvf_pixels_norm_inverted)
+                self.gvf_inverted_image = new_image
+                self.init_UI(self.gvf_inverted_image)
+                print("gvf inverted loaded")
         else:
             return
                 
@@ -544,8 +661,8 @@ class ImageViewer(tk.Frame):
 
         """ 
 
-        if self.sobel_mag_pixels == []:
-            self.sobel_filter(4)
+        if self.sobel_mag_pixels == [] and GAMMA > 0.0:
+            self.sobel_filter(4, "Grayscale")
 
         self.internal_energy_curvature = []
         self.internal_energy_stretch = []
@@ -627,16 +744,19 @@ class ImageViewer(tk.Frame):
                         energy_sum += ALPHA * ((stretch - val_min_stretch) / (val_max_stretch - val_min_stretch))
                         index = index + 1
                         if row_coord >= 0 and row_coord <= self.ROWS and col_coord >= 0 and col_coord <= self.COLS:
-                            energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            if GAMMA > 0.0:
+                                energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            energy_sum += EPSILON * (self.gvf_pixels_norm_one[row_coord * self.COLS + col_coord])
                             if self.image_type == 'L':
                                 energy_sum += DELTA * (self.grayscale_pixels_norm_one[row_coord * self.COLS + col_coord])
                             else:
                                 center_pixel = self.contour_lines[contour][point][3] + r * self.COLS + self.contour_lines[contour][point][2]
                                 sliding_pixel = row_coord * self.COLS + col_coord
-                                red_difference = self.red_pixels_norm_one[sliding_pixel] - self.red_pixels_norm_one[center_pixel]
-                                green_difference = self.green_pixels_norm_one[sliding_pixel] - self.green_pixels_norm_one[center_pixel]
-                                blue_difference = self.blue_pixels_norm_one[sliding_pixel] - self.blue_pixels_norm_one[center_pixel]
-                                energy_sum += DELTA * (red_difference*red_difference + green_difference*green_difference + blue_difference*blue_difference)
+                                if DELTA > 0.0:
+                                    red_difference = self.red_pixels_norm_one[sliding_pixel] - self.red_pixels_norm_one[center_pixel]
+                                    green_difference = self.green_pixels_norm_one[sliding_pixel] - self.green_pixels_norm_one[center_pixel]
+                                    blue_difference = self.blue_pixels_norm_one[sliding_pixel] - self.blue_pixels_norm_one[center_pixel]
+                                    energy_sum += DELTA * (red_difference*red_difference + green_difference*green_difference + blue_difference*blue_difference)
                         else:
                             energy_sum += 0.0
                         point_energy_sum.append(energy_sum)
@@ -690,8 +810,11 @@ class ImageViewer(tk.Frame):
         #   ButtonPress-3 -> right mouse click
         #   B1-Motion     -> mouse is moved when B1 is pressed
         self.canvas.bind("<ButtonPress-1>", self.on_left_click) 
-        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<B1-Motion>", self.on_left_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
+        self.canvas.bind("<ButtonPress-3>", self.on_right_click) 
+        self.canvas.bind("<B3-Motion>", self.on_right_drag)
+        self.canvas.bind("<ButtonRelease-3>", self.on_right_release)
 
 
     def on_left_click(self, event):
@@ -733,7 +856,8 @@ class ImageViewer(tk.Frame):
         # self.contour_lines contains every contour line and their pixel points
         # contour_lines_references contains the references created by tkiner - used to move and delete points
 
-    def on_drag(self, event):
+
+    def on_left_drag(self, event):
         # Start coords of line
         self.oval_coords["x"] = event.x
         self.oval_coords["y"] = event.y
@@ -751,6 +875,52 @@ class ImageViewer(tk.Frame):
         #                    self.oval_coords["x2"], 
         #                    self.oval_coords["y2"])
 
+    def on_right_click(self, event):
+        # Coords and dimensions of oval 
+        start_x = event.x
+        start_y = event.y
+        self.balloon_final_ovals_coords = []
+
+        for r in range(-1 * (CIRCLE_RADIUS+OVAL_RADIUS),(CIRCLE_RADIUS+OVAL_RADIUS)+1):
+            for c in range(-1 * (CIRCLE_RADIUS+OVAL_RADIUS),(CIRCLE_RADIUS+OVAL_RADIUS)+1):
+                if (r*r+c*c <= CIRCLE_RADIUS*CIRCLE_RADIUS + CIRCLE_RADIUS + 1 and r*r+c*c >= CIRCLE_RADIUS*CIRCLE_RADIUS - CIRCLE_RADIUS + 1):
+                    self.oval_coords["x"] = event.x + c
+                    self.oval_coords["y"] = event.y + r
+                    self.oval_coords["x2"] = event.x + c + OVAL_RADIUS
+                    self.oval_coords["y2"] = event.y + r + OVAL_RADIUS
+                    self.balloon_ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
+                                            self.oval_coords["y"], 
+                                            self.oval_coords["x2"], 
+                                            self.oval_coords["y2"],
+                                            outline=OUTLINE_COLOR))
+                    self.balloon_final_ovals_coords.append([self.oval_coords["x"], 
+                                            self.oval_coords["y"], 
+                                            self.oval_coords["x2"], 
+                                            self.oval_coords["y2"]])
+                    
+    def on_right_release(self, event):
+        """ Keep every third oval on mouse release """
+        balloon_ovals_new = []
+        balloon_ovals_new_references = []
+        for i in range(len(self.balloon_final_ovals_coords)):
+            if i % CONTOUR_DELETION_BALLOON == 0:
+                balloon_ovals_new.append(self.balloon_final_ovals_coords[i])
+                balloon_ovals_new_references.append(self.balloon_ovals_references[i + self.balloon_contour_start])
+
+            else:
+                self.canvas.delete(self.balloon_ovals_references[i + self.balloon_contour_start])
+        self.balloon_contour_start = self.balloon_contour_start + len(self.balloon_final_ovals_coords)
+        self.balloon_final_ovals_coords = balloon_ovals_new
+        self.balloon_final_ovals_references = balloon_ovals_new_references
+        
+        self.balloon_contour_lines.append(balloon_ovals_new) 
+        self.balloon_contour_lines_references.append(balloon_ovals_new_references)
+
+    def on_right_drag(self, event):
+        """ Do nothing on right click drag """
+        pass
+
+
     def clear_image(self):
         for contour in self.contour_lines_references:
             for point in contour:
@@ -767,9 +937,13 @@ class ImageViewer(tk.Frame):
 
 
     def contour_stats_debug(self):
-        print("There is %d contour line(s)" % (len(self.contour_lines)))
+        """Function used for debugging. Prints number of elastic and balloon contour lines w/ # of points"""
+        print("There is %d elastic contour line(s)" % (len(self.contour_lines)))
         for i in range(len(self.contour_lines)):
             print("Contour line %d has %d points" % (i, len(self.contour_lines[i])))
+        print("There is %d balloon contour line(s)" % (len(self.balloon_contour_lines)))
+        for i in range(len(self.balloon_contour_lines)):
+            print("Contour line %d has %d points" % (i, len(self.balloon_contour_lines[i])))
 
 def main():
 
