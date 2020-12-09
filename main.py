@@ -22,6 +22,7 @@
 
 """
 import tkinter as tk
+from tkinter.constants import CURRENT
 import tkinter.filedialog
 import PIL # Python Image Library
 from PIL import ImageTk, Image
@@ -37,6 +38,7 @@ MENU_1 = "Pages"
 MENU_2 = "Actions"
 MENU_3 = "Edit"
 MENU_4 = "Debug"
+MENU_5 = "Mode"
 
 LARGE_FONT= ("Verdana", 12)
 
@@ -167,6 +169,7 @@ class ImageViewer(tk.Frame):
         self.controller.title('Active Contours')
         self.canvas = None
         self.image_status = None # Track which image is loaded
+        self.mode = 0 # 0 = draw mode, 1 = move mode
 
         # Convolution Properties
         self.GAUSSIAN_SIZE = 5
@@ -239,6 +242,13 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.sobel_filter(5, "blur"))
         self.file_menu_edit.add_command(label='Clear', 
                                 command=lambda: self.clear_image())
+        # Modes - Draw or Move
+        self.file_menu_mode = tk.Menu(controller.menu_bar, tearoff=0)
+        controller.menu_bar.add_cascade(label=MENU_5, menu=self.file_menu_mode)
+        self.file_menu_mode.add_command(label='Draw Points', 
+                                command=lambda: self.mode_switch(0))
+        self.file_menu_mode.add_command(label='Move Points', 
+                                command=lambda: self.mode_switch(1))
         # Debug menu options
         self.file_menu_debug = tk.Menu(controller.menu_bar, tearoff=0)
         controller.menu_bar.add_cascade(label=MENU_4, menu=self.file_menu_debug)
@@ -663,6 +673,10 @@ class ImageViewer(tk.Frame):
 
         formula_stretch/elasticity = (average_distance_x - sqrt((X(i+1)-X(i))^2 + (Y(i+1)-Y(i))^2)))^2
 
+        Main external energy:
+        gradient vector flow/field = | gradient(convolved(I_grayscale, Gaussian_filter)|
+            - Honestly i'm not sure if this is a true gvf but this is how the wikipeadia said to create it 
+
         Graveyard (Failed energies):
             1) Calculating the distance between each color channel from the sliding pixel
                in the window, and the center of the window pixel
@@ -742,8 +756,8 @@ class ImageViewer(tk.Frame):
                         y_term_curve = contour_line[0][3] - 2*(contour_line[-1][3]+r) + contour_line[-2][3]
                         #x_term_curve = contour_line[0][2] - (contour_line[-1][2]+c) # internal energy curve (attempt 2)
                         #y_term_curve = contour_line[0][3] - (contour_line[-1][3]+r)
-                        x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)   
-                        y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)   
+                        x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)
+                        y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)
                         point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
                         point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
                     if model == "balloon":
@@ -866,6 +880,10 @@ class ImageViewer(tk.Frame):
             time.sleep(UPDATE_SPEED) # argument in seconds
 
 
+    def mode_switch(self, mode):
+        self.mode = mode
+
+
     def init_mouse_events(self):
         """Bind mouse events"""
         # Events:
@@ -873,71 +891,117 @@ class ImageViewer(tk.Frame):
         #   ButtonPress-2 -> middle (scroll) mouse click
         #   ButtonPress-3 -> right mouse click
         #   B1-Motion     -> mouse is moved when B1 is pressed
+        #   Shift         -> True when shift is held
         self.canvas.bind("<ButtonPress-1>", self.on_left_click) 
         self.canvas.bind("<B1-Motion>", self.on_left_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
         self.canvas.bind("<ButtonPress-3>", self.on_right_click) 
         self.canvas.bind("<B3-Motion>", self.on_right_drag)
         self.canvas.bind("<ButtonRelease-3>", self.on_right_release)
+        self.canvas.bind("<Shift-ButtonPress-1>", self.on_shift_click)
+        self.canvas.bind("<Shift-B1-Motion>", self.on_shift_drag)
+        self.canvas.bind("<Shift-ButtonRelease-1>", self.on_shift_release)
+
+
+
+    def on_shift_click(self, event):
+        self.canvas.config(cursor="left_ptr")
+        self.selected_oval_id = None
+        self.current_tags = None
+        self.selected_oval_id = self.canvas.find_closest(event.x, event.y)
+        self.current_tags = self.canvas.itemcget(self.selected_oval_id, "tags")
+        if "clickable" in self.current_tags:
+            self.delete_point()
+        #self.canvas.delete(self.selected_oval_id)
+
+    def on_shift_drag(self, event):
+        if "clickable" in self.current_tags:
+            self.canvas.delete(self.selected_oval_id)
+            self.selected_oval_id = self.canvas.create_oval(event.x, event.y, event.x + OVAL_RADIUS, event.y + OVAL_RADIUS, outline=OUTLINE_COLOR, tags=("clickable",))
+
+    def delete_point(self):
+        i = None
+        j = None
+        for contour in range(len(self.contour_lines)):
+            for point in range(len(self.contour_lines[contour])):
+                if self.contour_lines[contour][point][0] != self.canvas.coords(self.selected_oval_id)[0]:
+                    continue
+                if self.contour_lines[contour][point][1] != self.canvas.coords(self.selected_oval_id)[1]:
+                    continue
+                if self.contour_lines[contour][point][2] != self.canvas.coords(self.selected_oval_id)[2]:
+                    continue
+                if self.contour_lines[contour][point][3] != self.canvas.coords(self.selected_oval_id)[3]:
+                    continue
+                i = contour
+                j = point
+        
+        del self.contour_lines[i][j]
+
+    
+    def on_shift_release(self, event):
+        self.canvas.config(cursor="cross")
 
 
     def on_left_click(self, event):
-        # Coords and dimensions of oval 
-        self.final_ovals_coords = []
-        self.oval_coords["x"] = event.x
-        self.oval_coords["y"] = event.y
-        self.oval_coords["x2"] = event.x + OVAL_RADIUS
-        self.oval_coords["y2"] = event.y + OVAL_RADIUS
-        self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
-                                        self.oval_coords["y"], 
-                                        self.oval_coords["x2"], 
-                                        self.oval_coords["y2"],
-                                        outline=OUTLINE_COLOR))
-        self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+        if self.mode == 0: 
+            # Coords and dimensions of oval 
+            self.final_ovals_coords = []
+            self.oval_coords["x"] = event.x
+            self.oval_coords["y"] = event.y
+            self.oval_coords["x2"] = event.x + OVAL_RADIUS
+            self.oval_coords["y2"] = event.y + OVAL_RADIUS
+            self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
+                                            self.oval_coords["y"], 
+                                            self.oval_coords["x2"], 
+                                            self.oval_coords["y2"],
+                                            outline=OUTLINE_COLOR, tags=("clickable",)))
+            self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
 
 
     def on_left_release(self, event):
         """ Keep every fifth oval on mouse release """
-        ovals_new = []
-        ovals_new_references = []
-        for i in range(len(self.final_ovals_coords)):
-            if i % CONTOUR_DELETION == 0:
-                ovals_new.append(self.final_ovals_coords[i])
-                ovals_new_references.append(self.ovals_references[i + self.contour_start])
+        if self.mode == 0: 
+            ovals_new = []
+            ovals_new_references = []
+            for i in range(len(self.final_ovals_coords)):
+                if i % CONTOUR_DELETION == 0:
+                    ovals_new.append(self.final_ovals_coords[i])
+                    ovals_new_references.append(self.ovals_references[i + self.contour_start])
 
+                else:
+                    self.canvas.delete(self.ovals_references[i + self.contour_start])
+            self.contour_start = self.contour_start + len(self.final_ovals_coords)
+            self.final_ovals_coords = ovals_new
+            self.final_ovals_references = ovals_new_references
+
+            if len(ovals_new) >= REQUIRED_POINTS:
+                self.contour_lines.append(ovals_new) 
+                self.contour_lines_references.append(ovals_new_references)
             else:
-                self.canvas.delete(self.ovals_references[i + self.contour_start])
-        self.contour_start = self.contour_start + len(self.final_ovals_coords)
-        self.final_ovals_coords = ovals_new
-        self.final_ovals_references = ovals_new_references
-        
-        if len(ovals_new) >= REQUIRED_POINTS:
-            self.contour_lines.append(ovals_new) 
-            self.contour_lines_references.append(ovals_new_references)
-        else:
-            for oval in ovals_new_references:
-                 self.canvas.delete(oval)
-        # self.contour_lines contains every contour line and their pixel points
-        # contour_lines_references contains the references created by tkiner - used to move and delete points
+                for oval in ovals_new_references:
+                     self.canvas.delete(oval)
+            # self.contour_lines contains every contour line and their pixel points
+            # contour_lines_references contains the references created by tkiner - used to move and delete points
 
 
     def on_left_drag(self, event):
-        # Start coords of line
-        self.oval_coords["x"] = event.x
-        self.oval_coords["y"] = event.y
-        self.oval_coords["x2"] = event.x + OVAL_RADIUS
-        self.oval_coords["y2"] = event.y + OVAL_RADIUS
-        self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
-                                        self.oval_coords["y"], 
-                                        self.oval_coords["x2"], 
-                                        self.oval_coords["y2"],
-                                        outline=OUTLINE_COLOR))
-        self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
-        # Dynamically update
-        #self.canvas.coords(self.final_ovals_coords[-1],self.oval_coords["x"], 
-        #                    self.oval_coords["y"], 
-        #                    self.oval_coords["x2"], 
-        #                    self.oval_coords["y2"])
+        if self.mode == 0:
+            # Start coords of line
+            self.oval_coords["x"] = event.x
+            self.oval_coords["y"] = event.y
+            self.oval_coords["x2"] = event.x + OVAL_RADIUS
+            self.oval_coords["y2"] = event.y + OVAL_RADIUS
+            self.ovals_references.append(self.canvas.create_oval(self.oval_coords["x"], 
+                                            self.oval_coords["y"], 
+                                            self.oval_coords["x2"], 
+                                            self.oval_coords["y2"],
+                                            outline=OUTLINE_COLOR, tags=("clickable",)))
+            self.final_ovals_coords.append([self.oval_coords["x"], self.oval_coords["y"], self.oval_coords["x2"], self.oval_coords["y2"]])
+            # Dynamically update
+            #self.canvas.coords(self.final_ovals_coords[-1],self.oval_coords["x"], 
+            #                    self.oval_coords["y"], 
+            #                    self.oval_coords["x2"], 
+            #                    self.oval_coords["y2"])
 
     def on_right_click(self, event):
         # Coords and dimensions of oval 
@@ -956,7 +1020,7 @@ class ImageViewer(tk.Frame):
                                             self.oval_coords["y"], 
                                             self.oval_coords["x2"], 
                                             self.oval_coords["y2"],
-                                            outline=OUTLINE_COLOR))
+                                            outline=OUTLINE_COLOR, tags=("clickable",)))
                     self.balloon_final_ovals_coords.append([self.oval_coords["x"], 
                                             self.oval_coords["y"], 
                                             self.oval_coords["x2"], 
@@ -989,13 +1053,22 @@ class ImageViewer(tk.Frame):
         for contour in self.contour_lines_references:
             for point in contour:
                 self.canvas.delete(point)
+        for contour in self.balloon_contour_lines_references:
+            for point in contour:
+                self.canvas.delete(point)
         self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
         self.final_ovals_coords = []
+        self.balloon_contour_coords = []
         self.contour_lines = []
+        self.balloon_contour_lines =[]
         self.ovals_references = []
+        self.balloon_ovals_references = []
         self.final_ovals_references = []
+        self.balloon_final_ovals_references =[]
         self.contour_lines_references = []
+        self.balloon_contour_lines_references = []
         self.contour_start = 0
+        self.balloon_contour_start = 0
         #self.canvas.config(width=self.image.width(), height=self.image.height())
         #self.controller.geometry(str(WIDTH) + "x" +str(HEIGHT))
 
