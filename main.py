@@ -15,6 +15,7 @@
 
  Dependencies:
     1) pillow
+    2) tkinter
 
  Design Choices:
     1) 
@@ -55,11 +56,19 @@ CONTOUR_DELETION = 5 # keep every i'th contour point
 REQUIRED_POINTS = 8 # The number of required points in a contour line
 
 # Set this term to 0 if you wish to exclude an energy 
+# Rubber-band Model Parameters
 ALPHA = 1.0 # Internal energy factor -> stretch/elasticity factor
 BETA = 1.0  # Internal energy factor -> curvature factor
 GAMMA = 0.0 # External energy factor -> negative gradient magnitude
 DELTA = 0.0 # External energy factor -> grayscale intensity
 EPSILON = 1.0 # External energy factor -> gradient vector flow/field
+
+# Balloon model parameters
+ALPHA_BALLOON = -1.0 # Internal energy factor -> stretch/elasticity factor
+BETA_BALLOON = -1.0  # Internal energy factor -> curvature factor
+GAMMA_BALLOON = 0.0 # External energy factor -> negative gradient magnitude
+DELTA_BALLOON = 0.0 # External energy factor -> grayscale intensity
+EPSILON_BALLOON = 4.0 # External energy factor -> gradient vector flow/field
 
 class Application(tk.Tk):
 
@@ -237,9 +246,10 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.contour_stats_debug())
         self.file_menu_debug.add_command(label='Internal Engery Curvature', 
                                 command=lambda: self.energy_calculations())
-        self.file_menu_debug.add_command(label='Active Contours', 
-                                command=lambda: self.active_contours())
-
+        self.file_menu_debug.add_command(label='Active Contours - Rubber Band', 
+                                command=lambda: self.active_contours(model="rubber-band"))
+        self.file_menu_debug.add_command(label='Active Contours - Balloon', 
+                                command=lambda: self.active_contours(model="balloon"))
 
     def load_image(self):
         # Clear variables from previous image
@@ -641,11 +651,12 @@ class ImageViewer(tk.Frame):
     
     ## Calculate energies for contour model
 
-    def energy_calculations(self):
+    def energy_calculations(self, contour_lines_parameter, model="rubber-band"):
         """ 
-        Calculate the curvature energy. 
-        Stored as: [[[x1, y1], [x2, y2]], <--- energy for contour line 1
-                    [[x1, y1], [x2, y2]]] <--- energy for contour line 2
+        Calculate the internal and external energy.
+
+        parameters:
+            model - "rubber-band" => use the rubber band model, "balloon" => use the balloon model 
 
         Internal energies:
         formula_curvature = |V(i+1)-2Vi+V(i-1)|^2 -> (X(i+1)-2Xi+X(i-1))^2 + (Y(i+1)-2Yi+Y(i-1))^2 
@@ -666,11 +677,13 @@ class ImageViewer(tk.Frame):
 
         self.internal_energy_curvature = []
         self.internal_energy_stretch = []
+        self.internal_energy_inflation = []
 
         # Loop through all contour lines
-        for contour_line in self.contour_lines:
+        for contour_line in contour_lines_parameter:
             int_energy_curve = []
             int_energy_stretch = []
+            int_energy_inflation = []
             
             # Calcuate average distance between all contour points 
             distance = 0
@@ -687,49 +700,86 @@ class ImageViewer(tk.Frame):
                 i = 0
                 point_energy_curve = []
                 point_energy_stretch = []
+                point_energy_inflation = []
                 for r in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
                     for c in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
-                        x_term_curve = contour_line[index+1][2] - 2*(contour_line[index][2]+c) + contour_line[index-1][2] # internal energy curve (attempt 1)
-                        y_term_curve = contour_line[index+1][3] - 2*(contour_line[index][3]+r) + contour_line[index-1][3]
-                        #x_term_curve = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy curve (attempt 2)
-                        #y_term_curve = contour_line[index+1][3] - (contour_line[index][3]+r)
-                        x_term_stretch = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy stretch
-                        y_term_stretch = contour_line[index+1][3] - (contour_line[index][3]+r)  
+                        if model == "rubber-band":
+                            x_term_curve = contour_line[index+1][2] - 2*(contour_line[index][2]+c) + contour_line[index-1][2] # internal energy curve (attempt 1)
+                            y_term_curve = contour_line[index+1][3] - 2*(contour_line[index][3]+r) + contour_line[index-1][3]
+                            #x_term_curve = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy curve (attempt 2)
+                            #y_term_curve = contour_line[index+1][3] - (contour_line[index][3]+r)
+                            x_term_stretch = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy stretch
+                            y_term_stretch = contour_line[index+1][3] - (contour_line[index][3]+r)  
+                        if model =="balloon":
+                            x_term_curve = contour_line[index+1][2] - 2*(contour_line[index][2]+c) + contour_line[index-1][2] # internal energy curve (attempt 1)
+                            y_term_curve = contour_line[index+1][3] - 2*(contour_line[index][3]+r) + contour_line[index-1][3]
+                            #x_term_curve = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy curve (attempt 2)
+                            #y_term_curve = contour_line[index+1][3] - (contour_line[index][3]+r)
+                            x_term_stretch = contour_line[index+1][2] - (contour_line[index][2]+c) # internal energy stretch
+                            y_term_stretch = contour_line[index+1][3] - (contour_line[index][3]+r)
+                            
                         point_energy_curve.append((x_term_curve*x_term_curve)  + (y_term_curve*y_term_curve))
                         point_energy_stretch.append((x_term_stretch*x_term_stretch)  + (y_term_stretch*y_term_stretch))
-                        
-                point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
+                
+                if model == "rubber-band":
+                    point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
+                if model == "balloon":
+                    point_energy_stretch = [(average_distance+sqrt(value))*(average_distance+sqrt(value)) for value in point_energy_stretch]
+                
                 int_energy_curve.append(point_energy_curve)
                 int_energy_stretch.append(point_energy_stretch)
+                if model == "balloon":
+                    point_energy_inflation = [1 / ((average_distance-sqrt(value))*(average_distance-sqrt(value))) if average_distance-sqrt(value) != 0 else 0 for value in point_energy_stretch]
+                    int_energy_inflation.append(point_energy_inflation)
 
             point_energy_curve = []
             point_energy_stretch = []
+            point_energy_inflation = []
             for r in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
                 for c in range(-1*(WINDOW_SIZE//2), (WINDOW_SIZE//2)+1):
-                    x_term_curve = contour_line[0][2] - 2*(contour_line[-1][2]+c) + contour_line[-2][2]  
-                    y_term_curve = contour_line[0][3] - 2*(contour_line[-1][3]+r) + contour_line[-2][3]
-                    #x_term_curve = contour_line[0][2] - (contour_line[-1][2]+c) # internal energy curve (attempt 2)
-                    #y_term_curve = contour_line[0][3] - (contour_line[-1][3]+r)
-                    x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)   
-                    y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)   
-                    point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
-                    point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
-                    
-            point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
+                    if model == "rubber-band":
+                        x_term_curve = contour_line[0][2] - 2*(contour_line[-1][2]+c) + contour_line[-2][2]  
+                        y_term_curve = contour_line[0][3] - 2*(contour_line[-1][3]+r) + contour_line[-2][3]
+                        #x_term_curve = contour_line[0][2] - (contour_line[-1][2]+c) # internal energy curve (attempt 2)
+                        #y_term_curve = contour_line[0][3] - (contour_line[-1][3]+r)
+                        x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)   
+                        y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)   
+                        point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
+                        point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
+                    if model == "balloon":
+                        x_term_curve = contour_line[0][2] - 2*(contour_line[-1][2]+c) + contour_line[-2][2]  
+                        y_term_curve = contour_line[0][3] - 2*(contour_line[-1][3]+r) + contour_line[-2][3]
+                        x_term_stretch = contour_line[0][2] - (contour_line[-1][2]+c)   
+                        y_term_stretch = contour_line[0][3] - (contour_line[-1][3]+r)   
+                        point_energy_curve.append((x_term_curve*x_term_curve) + (y_term_curve*y_term_curve))
+                        point_energy_stretch.append((x_term_stretch*x_term_stretch) + (y_term_stretch*y_term_stretch))
+            if model == "rubber-band":
+                point_energy_stretch = [(average_distance-sqrt(value))*(average_distance-sqrt(value)) for value in point_energy_stretch]
+            if model == "balloon":
+                point_energy_stretch = [(average_distance+sqrt(value))*(average_distance+sqrt(value)) for value in point_energy_stretch]
+            
+            if model == "balloon":
+                point_energy_inflation = [1 / ((average_distance-sqrt(value))*(average_distance-sqrt(value))) if average_distance-sqrt(value) != 0 else 0 for value in point_energy_stretch]
+                int_energy_inflation.append(point_energy_inflation)
+
             int_energy_curve.append(point_energy_curve)
             int_energy_stretch.append(point_energy_stretch)
             
             self.internal_energy_curvature.append(int_energy_curve)
             self.internal_energy_stretch.append(int_energy_stretch)
+            if model == "balloon":
+                self.internal_energy_inflation.append(int_energy_inflation)
 
         # Normalize all energies between 0-1
         self.all_energies_sum = []
-        for contour in range(len(self.contour_lines)):
+        for contour in range(len(contour_lines_parameter)):
             contour_energy_sum = []
-            for point in range(len(self.contour_lines[contour])):
+            for point in range(len(contour_lines_parameter[contour])):
                 point_energy_sum = []
                 val_min_curve, val_max_curve = min(self.internal_energy_curvature[contour][point]), max(self.internal_energy_curvature[contour][point])
                 val_min_stretch, val_max_stretch = min(self.internal_energy_stretch[contour][point]), max(self.internal_energy_stretch[contour][point])
+                if model == "balloon":
+                    val_min_inflation, val_max_inflation = min(self.internal_energy_inflation[contour][point]), max(self.internal_energy_inflation[contour][point])
                 energy_sum = 0
                 point_stretch_norm = []
                 index = 0
@@ -738,19 +788,28 @@ class ImageViewer(tk.Frame):
                         energy_sum = 0
                         curve = self.internal_energy_curvature[contour][point][index]
                         stretch = self.internal_energy_stretch[contour][point][index]
-                        col_coord = self.contour_lines[contour][point][2] + c
-                        row_coord = self.contour_lines[contour][point][3] + r 
-                        energy_sum += BETA * ((curve - val_min_curve) / (val_max_curve - val_min_curve))
-                        energy_sum += ALPHA * ((stretch - val_min_stretch) / (val_max_stretch - val_min_stretch))
+                        if model == "balloon":
+                            inflation = self.internal_energy_inflation[contour][point][index]
+                        col_coord = contour_lines_parameter[contour][point][2] + c
+                        row_coord = contour_lines_parameter[contour][point][3] + r 
+                        if model == "rubber-band":
+                            energy_sum += ALPHA * ((stretch - val_min_stretch) / (val_max_stretch - val_min_stretch))
+                            energy_sum += BETA * ((curve - val_min_curve) / (val_max_curve - val_min_curve))
+                        elif model == "balloon":
+                            energy_sum += ALPHA_BALLOON * ((stretch - val_min_stretch) / (val_max_stretch - val_min_stretch))
+                            energy_sum += BETA_BALLOON * ((curve - val_min_curve) / (val_max_curve - val_min_curve))
                         index = index + 1
                         if row_coord >= 0 and row_coord <= self.ROWS and col_coord >= 0 and col_coord <= self.COLS:
                             if GAMMA > 0.0:
                                 energy_sum += GAMMA * (self.sobel_mag_pixels_norm_one[row_coord * self.COLS + col_coord])
-                            energy_sum += EPSILON * (self.gvf_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            if model == "rubber-band":
+                                energy_sum += EPSILON * (self.gvf_pixels_norm_one[row_coord * self.COLS + col_coord])
+                            elif model == "balloon":
+                                energy_sum += EPSILON_BALLOON * (self.gvf_pixels_norm_one[row_coord * self.COLS + col_coord])
                             if self.image_type == 'L':
                                 energy_sum += DELTA * (self.grayscale_pixels_norm_one[row_coord * self.COLS + col_coord])
                             else:
-                                center_pixel = self.contour_lines[contour][point][3] + r * self.COLS + self.contour_lines[contour][point][2]
+                                center_pixel = contour_lines_parameter[contour][point][3] + r * self.COLS + contour_lines_parameter[contour][point][2]
                                 sliding_pixel = row_coord * self.COLS + col_coord
                                 if DELTA > 0.0:
                                     red_difference = self.red_pixels_norm_one[sliding_pixel] - self.red_pixels_norm_one[center_pixel]
@@ -773,11 +832,11 @@ class ImageViewer(tk.Frame):
                 print("")
                 print("")
         """
-    def greedy_minimization(self):
+    def greedy_minimization(self, contour_lines_parameter, contour_lines_references_parameter):
         for contour in range(len(self.all_energies_sum)):
             for point in range(len(self.all_energies_sum[contour])):
                 point_ref = self.all_energies_sum[contour][point]
-                oval_ref = self.contour_lines_references[contour][point]
+                oval_ref = contour_lines_references_parameter[contour][point]
                 offset_c = 0
                 offset_r = 0
                 min_value = point_ref[0]
@@ -788,15 +847,20 @@ class ImageViewer(tk.Frame):
                             offset_c = c
                             offset_r = r
                 self.canvas.move(oval_ref, (-1*(WINDOW_SIZE//2)) + offset_c, (-1*(WINDOW_SIZE//2)) + offset_r)
-                self.contour_lines[contour][point][0] = self.contour_lines[contour][point][0] - (WINDOW_SIZE//2) + offset_c  
-                self.contour_lines[contour][point][1] = self.contour_lines[contour][point][1] - (WINDOW_SIZE//2) + offset_r 
-                self.contour_lines[contour][point][2] = self.contour_lines[contour][point][2] - (WINDOW_SIZE//2) + offset_c
-                self.contour_lines[contour][point][3] = self.contour_lines[contour][point][3] - (WINDOW_SIZE//2) + offset_r
+                contour_lines_parameter[contour][point][0] = contour_lines_parameter[contour][point][0] - (WINDOW_SIZE//2) + offset_c  
+                contour_lines_parameter[contour][point][1] = contour_lines_parameter[contour][point][1] - (WINDOW_SIZE//2) + offset_r 
+                contour_lines_parameter[contour][point][2] = contour_lines_parameter[contour][point][2] - (WINDOW_SIZE//2) + offset_c
+                contour_lines_parameter[contour][point][3] = contour_lines_parameter[contour][point][3] - (WINDOW_SIZE//2) + offset_r
 
-    def active_contours(self):
+    def active_contours(self, model="rubber-band"):
+        """Driver function for the active contours algorithm"""
         for i in range(ITERATIONS):
-            self.energy_calculations()
-            self.greedy_minimization()
+            if model == "rubber-band":
+                self.energy_calculations(self.contour_lines,model=model)
+                self.greedy_minimization(self.contour_lines, self.contour_lines_references)
+            if model == "balloon":
+                self.energy_calculations(self.balloon_contour_lines, model=model)
+                self.greedy_minimization(self.balloon_contour_lines, self.balloon_contour_lines_references)
             #print("Iteration %d finished" % (i))
             self.canvas.update() # update canvas during the loop
             time.sleep(UPDATE_SPEED) # argument in seconds
