@@ -39,6 +39,7 @@ MENU_2 = "Actions"
 MENU_3 = "Edit"
 MENU_4 = "Debug"
 MENU_5 = "Mode"
+MENU_6 = "Contours"
 
 LARGE_FONT= ("Verdana", 12)
 
@@ -62,15 +63,15 @@ REQUIRED_POINTS = 8 # The number of required points in a contour line
 ALPHA = 1.0 # Internal energy factor -> stretch/elasticity factor
 BETA = 1.0  # Internal energy factor -> curvature factor
 GAMMA = 0.0 # External energy factor -> negative gradient magnitude
-DELTA = 0.0 # External energy factor -> grayscale intensity
+DELTA = 0.0 # External energy factor -> grayscale/color intensity
 EPSILON = 1.0 # External energy factor -> gradient vector flow/field
 
 # Balloon model parameters
 ALPHA_BALLOON = -1.0 # Internal energy factor -> stretch/elasticity factor
 BETA_BALLOON = -1.0  # Internal energy factor -> curvature factor
 GAMMA_BALLOON = 0.0 # External energy factor -> negative gradient magnitude
-DELTA_BALLOON = 0.0 # External energy factor -> grayscale intensity
-EPSILON_BALLOON = 4.0 # External energy factor -> gradient vector flow/field
+DELTA_BALLOON = 0.0 # External energy factor -> grayscale/color intensity
+EPSILON_BALLOON = 15.0 # External energy factor -> gradient vector flow/field
 
 class Application(tk.Tk):
 
@@ -203,6 +204,7 @@ class ImageViewer(tk.Frame):
         self.balloon_contour_lines_references = []
         self.contour_start = 0 # used for contour point deletion
         self.balloon_contour_start = 0
+        self.moved_ovals = []
 
         # Add additional menu options
         # Easier to add them to access image editing functions  
@@ -242,6 +244,13 @@ class ImageViewer(tk.Frame):
                                 command=lambda: self.sobel_filter(5, "blur"))
         self.file_menu_edit.add_command(label='Clear', 
                                 command=lambda: self.clear_image())
+        # Contours
+        self.file_menu_contours = tk.Menu(controller.menu_bar, tearoff=0)
+        controller.menu_bar.add_cascade(label=MENU_6, menu=self.file_menu_contours)
+        self.file_menu_contours.add_command(label='Active Contours - Rubber Band', 
+                                command=lambda: self.active_contours(model="rubber-band"))
+        self.file_menu_contours.add_command(label='Active Contours - Balloon', 
+                                command=lambda: self.active_contours(model="balloon"))
         # Modes - Draw or Move
         self.file_menu_mode = tk.Menu(controller.menu_bar, tearoff=0)
         controller.menu_bar.add_cascade(label=MENU_5, menu=self.file_menu_mode)
@@ -254,12 +263,7 @@ class ImageViewer(tk.Frame):
         controller.menu_bar.add_cascade(label=MENU_4, menu=self.file_menu_debug)
         self.file_menu_debug.add_command(label='Contour Information', 
                                 command=lambda: self.contour_stats_debug())
-        self.file_menu_debug.add_command(label='Internal Engery Curvature', 
-                                command=lambda: self.energy_calculations())
-        self.file_menu_debug.add_command(label='Active Contours - Rubber Band', 
-                                command=lambda: self.active_contours(model="rubber-band"))
-        self.file_menu_debug.add_command(label='Active Contours - Balloon', 
-                                command=lambda: self.active_contours(model="balloon"))
+        
 
     def load_image(self):
         # Clear variables from previous image
@@ -671,7 +675,7 @@ class ImageViewer(tk.Frame):
         Internal energies:
         formula_curvature = |V(i+1)-2Vi+V(i-1)|^2 -> (X(i+1)-2Xi+X(i-1))^2 + (Y(i+1)-2Yi+Y(i-1))^2 
 
-        formula_stretch/elasticity = (average_distance_x - sqrt((X(i+1)-X(i))^2 + (Y(i+1)-Y(i))^2)))^2
+        formula_stretch/elasticity = (average_distance - sqrt((X(i+1)-X(i))^2 + (Y(i+1)-Y(i))^2)))^2
 
         Main external energy:
         gradient vector flow/field = | gradient(convolved(I_grayscale, Gaussian_filter)|
@@ -918,6 +922,7 @@ class ImageViewer(tk.Frame):
         if "clickable" in self.current_tags:
             self.canvas.delete(self.selected_oval_id)
             self.selected_oval_id = self.canvas.create_oval(event.x, event.y, event.x + OVAL_RADIUS, event.y + OVAL_RADIUS, outline=OUTLINE_COLOR, tags=("clickable",))
+            self.moved_ovals.append(self.selected_oval_id)
 
     def delete_point(self):
         i = None
@@ -1056,6 +1061,8 @@ class ImageViewer(tk.Frame):
         for contour in self.balloon_contour_lines_references:
             for point in contour:
                 self.canvas.delete(point)
+        for oval in self.moved_ovals:
+            self.canvas.delete(oval)
         self.oval_coords = {"x":0,"y":0,"x2":0,"y2":0}
         self.final_ovals_coords = []
         self.balloon_contour_coords = []
