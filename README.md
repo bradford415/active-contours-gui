@@ -1,2 +1,2 @@
-# active-contours-gui
-An Interactive Python GUI that implements active contours. Written in Python using Tkinter. Graduate project for ece 6310.
+# Active Contours GUI
+A GUI impelementation of the active contours algorithm. The project was created soley in Python using on Tkinter, for the GUI, and Python's Image Library (PIL), to get pixel data from the image.
