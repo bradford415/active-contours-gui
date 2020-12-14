@@ -6,4 +6,4 @@ A GUI impelementation of the active contours algorithm. The project was created 
 - pillow
 
 ## Preview
-![gif](pictures/active_contours_gif.gif = 680x600)
+<img src="pictures/active_contours_gif.gif" width="660" height="601" />
