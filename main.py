@@ -4,21 +4,9 @@
  ECE 6310 Fall 2020
  Graduate Project
 
- Purpose:
-
- Assumptions:
-    1) 
-
- Bugs:
-    1) Running this project in a git bash with "python main.py"
-        - fix: Run in git bash using "py main.py"
-
  Dependencies:
     1) pillow
     2) tkinter
-
- Design Choices:
-    1) 
 
 """
 import tkinter as tk
@@ -44,8 +32,8 @@ MENU_6 = "Contours"
 LARGE_FONT= ("Verdana", 12)
 
 # General Parameters
-ITERATIONS = 150
-UPDATE_SPEED = 0.02 # Time Time in seconds 
+ITERATIONS = 300
+UPDATE_SPEED = 0.02 # Time Time in seconds s
 OVAL_RADIUS = 5
 OUTLINE_COLOR = 'blue' # 'black'
 WINDOW_SIZE = 7
@@ -60,7 +48,7 @@ REQUIRED_POINTS = 8 # The number of required points in a contour line
 
 # Set this term to 0 if you wish to exclude an energy 
 # Rubber-band Model Parameters
-ALPHA = 1.0 # Internal energy factor -> stretch/elasticity factor
+ALPHA = 2.0 # Internal energy factor -> stretch/elasticity factor
 BETA = 1.0  # Internal energy factor -> curvature factor
 GAMMA = 0.0 # External energy factor -> negative gradient magnitude
 DELTA = 0.0 # External energy factor -> grayscale/color intensity
