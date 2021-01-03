@@ -1,5 +1,5 @@
 # Active Contours GUI
-A GUI impelementation of the active contours algorithm. The project was created solely in Python using on Tkinter, for the GUI, and Python's Image Library (PIL), to get pixel data from the image.
+A GUI impelementation of the active contours computer vision algorithm. The project was created solely in Python using on Tkinter, for the GUI, and Python's Image Library (PIL), to get pixel data from the image.
 
 ## Dependencies
 - tkinter
